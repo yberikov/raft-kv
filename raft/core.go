@@ -1,0 +1,178 @@
+package raft
+
+import "math/rand"
+
+type Core struct {
+	id          uint64
+	peers       []uint64
+	currentTerm uint64
+	votedFor    uint64
+	state       stateType
+	log         []Entry
+	commitIndex int
+
+	minElectionTicks int
+	maxElectionTicks int
+	electionTimeout  int
+	rng              *rand.Rand
+	electionElapsed  int
+	votesGranted     map[uint64]bool
+
+	nextIndex  map[uint64]int // nodeID - index
+	matchIndex map[uint64]int
+
+	// init values after recovery
+	startIndex int
+	startTerm  uint64
+
+	msgs []Message
+}
+
+type (
+	Entry struct {
+		cmd  any
+		term uint64
+	}
+
+	stateType string
+	MsgType   string
+)
+
+var (
+	FollowerState  stateType = "follower"
+	LeaderState    stateType = "leader"
+	CandidateState stateType = "candidate"
+)
+
+func NewCore(id uint64, peers []uint64, minElectionTicks, maxElectionTicks int, rng *rand.Rand) *Core {
+	c := &Core{
+		id:               id,
+		peers:            peers,
+		currentTerm:      0,
+		votedFor:         0,
+		votesGranted:     map[uint64]bool{},
+		state:            FollowerState,
+		log:              make([]Entry, 0),
+		commitIndex:      0,
+		minElectionTicks: minElectionTicks,
+		maxElectionTicks: maxElectionTicks,
+		rng:              rng,
+	}
+	c.resetElectionTimer()
+	//c.log = append(c.log, Entry{cmd: nil, term: 0})
+	return c
+}
+
+func (c *Core) Step(m Message) {
+	switch m.Type {
+	case MsgVoteRequest:
+		c.handleVoteRequest(m)
+	case MsgVoteResponse:
+		c.handleVoteResponse(m)
+	}
+}
+
+func (c *Core) Tick() {
+	c.electionElapsed++
+
+	// Start election
+	if c.electionElapsed > c.electionTimeout && c.state != LeaderState {
+		c.state = CandidateState
+		c.currentTerm++
+		c.votesGranted = map[uint64]bool{c.id: true}
+		c.votedFor = c.id
+		c.resetElectionTimer()
+
+		for _, peer := range c.peers {
+			if peer == c.id {
+				continue
+			}
+			resp := Message{
+				FromId:       c.id,
+				ToId:         peer,
+				Type:         MsgVoteRequest,
+				Term:         c.currentTerm,
+				LastLogTerm:  c.lastTerm(),
+				LastLogIndex: c.lastIndex(),
+			}
+
+			c.msgs = append(c.msgs, resp)
+		}
+	}
+}
+
+func (c *Core) Ready() {
+
+}
+
+func (c *Core) handleVoteRequest(m Message) {
+	resp := Message{
+		FromId: c.id,
+		ToId:   m.FromId,
+		Type:   MsgVoteResponse,
+		Term:   c.currentTerm,
+	}
+
+	if m.Term < c.currentTerm {
+		resp.Success = false
+		c.msgs = append(c.msgs, resp)
+		return
+	}
+
+	if c.currentTerm < m.Term {
+		resp.Term = m.Term
+		c.becomeFollower(m.Term)
+	}
+
+	if c.votedFor == 0 || c.votedFor == m.FromId {
+		termCond := c.lastTerm() < m.LastLogTerm
+		indexCond := c.lastTerm() == m.LastLogTerm && c.lastIndex() <= m.LastLogIndex
+		if termCond || indexCond {
+			c.votedFor = m.FromId
+			resp.Success = true
+		}
+	}
+	c.msgs = append(c.msgs, resp)
+}
+
+func (c *Core) handleVoteResponse(m Message) {
+	if m.Term > c.currentTerm {
+		c.becomeFollower(m.Term)
+		return
+	}
+	if !m.Success || m.Term != c.currentTerm {
+		return
+	}
+
+	c.votesGranted[m.FromId] = true
+	if len(c.votesGranted)*2 > len(c.peers) && c.state == CandidateState {
+		c.state = LeaderState
+	}
+}
+
+func (c *Core) becomeFollower(newTerm uint64) {
+	c.state = FollowerState
+	c.currentTerm = newTerm
+	c.votedFor = 0
+	c.votesGranted = make(map[uint64]bool)
+	c.resetElectionTimer()
+}
+
+func (c *Core) lastTerm() uint64 {
+	if len(c.log) == 0 {
+		return c.startTerm
+	}
+	return c.log[len(c.log)-1].term
+}
+
+func (c *Core) lastIndex() int {
+	if len(c.log) == 0 {
+		return c.startIndex
+	}
+	return len(c.log) - 1 + c.startIndex
+}
+
+func (c *Core) resetElectionTimer() {
+	c.electionElapsed = 0
+	c.electionTimeout = c.minElectionTicks + c.rng.Intn(c.maxElectionTicks-c.minElectionTicks+1)
+}
