@@ -9,9 +9,14 @@ type Message struct {
 
 	Type    MsgType
 	Success bool // result to RequestVote
+
+	Entries     []Entry
+	CommitIndex int
 }
 
 var (
-	MsgVoteRequest  MsgType = "vote_request"
-	MsgVoteResponse MsgType = "vote_response"
+	MsgVoteRequest    MsgType = "vote_request"
+	MsgVoteResponse   MsgType = "vote_response"
+	MsgAppendRequest  MsgType = "append_request"
+	MsgAppendResponse MsgType = "append_response"
 )
