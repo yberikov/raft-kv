@@ -73,7 +73,7 @@ func TestTrioElectsLeaderAndReplicates(t *testing.T) {
 	t.Logf("seed=%d: node %d elected leader in term %d", seed, leader, d.nodes[leader].currentTerm)
 
 	for i := 0; i < 3; i++ {
-		d.nodes[leader].log = append(d.nodes[leader].log, Entry{cmd: fmt.Sprintf("op-%d", i), term: d.nodes[leader].currentTerm})
+		d.nodes[leader].log = append(d.nodes[leader].log, Entry{Cmd: fmt.Sprintf("op-%d", i), Term: d.nodes[leader].currentTerm})
 	}
 	for extra := 0; extra < 30; extra++ {
 		inbox = d.round(inbox)
@@ -99,7 +99,7 @@ func TestTrioRepairsDivergedFollower(t *testing.T) {
 	leader := d.nodes[1]
 	leader.currentTerm = 5
 	leader.state = LeaderState
-	leader.log = append(leader.log, Entry{cmd: "a", term: 5}, Entry{cmd: "b", term: 5})
+	leader.log = append(leader.log, Entry{Cmd: "a", Term: 5}, Entry{Cmd: "b", Term: 5})
 	for _, id := range d.ids {
 		leader.nextIndex[id] = len(leader.log)
 		leader.matchIndex[id] = 0
@@ -109,13 +109,13 @@ func TestTrioRepairsDivergedFollower(t *testing.T) {
 	// walked back and overwritten by the leader's log.
 	follower := d.nodes[2]
 	follower.currentTerm = 5
-	follower.log = append(follower.log, Entry{cmd: "x", term: 3}, Entry{cmd: "y", term: 3}, Entry{cmd: "z", term: 4})
+	follower.log = append(follower.log, Entry{Cmd: "x", Term: 3}, Entry{Cmd: "y", Term: 3}, Entry{Cmd: "z", Term: 4})
 
 	// node 3 is already caught up with the leader — kept in sync so it can't
 	// be recruited into a competing election by node 2's (locally more
 	// "advanced") diverged log while this test isolates repair on node 2.
 	d.nodes[3].currentTerm = 5
-	d.nodes[3].log = append(d.nodes[3].log, Entry{cmd: "a", term: 5}, Entry{cmd: "b", term: 5})
+	d.nodes[3].log = append(d.nodes[3].log, Entry{Cmd: "a", Term: 5}, Entry{Cmd: "b", Term: 5})
 
 	var inbox []Message
 	for round := 0; round < 50; round++ {

@@ -70,7 +70,7 @@ func TestHandleVoteRequest(t *testing.T) {
 		{
 			name: "rejects a candidate whose log ends in an older term",
 			core: func(t *testing.T) *Core {
-				return newTestCore(t, 1, []uint64{1, 2, 3}, withTerm(3), withLog(Entry{term: 2}, Entry{term: 3}))
+				return newTestCore(t, 1, []uint64{1, 2, 3}, withTerm(3), withLog(Entry{Term: 2}, Entry{Term: 3}))
 			},
 			req:          Message{Type: MsgVoteRequest, FromId: 2, Term: 3, LastLogIndex: 2, LastLogTerm: 2},
 			wantSuccess:  false,
@@ -81,7 +81,7 @@ func TestHandleVoteRequest(t *testing.T) {
 		{
 			name: "rejects a candidate with the same last term but a shorter log",
 			core: func(t *testing.T) *Core {
-				return newTestCore(t, 1, []uint64{1, 2, 3}, withTerm(3), withLog(Entry{term: 2}, Entry{term: 3}))
+				return newTestCore(t, 1, []uint64{1, 2, 3}, withTerm(3), withLog(Entry{Term: 2}, Entry{Term: 3}))
 			},
 			req:          Message{Type: MsgVoteRequest, FromId: 2, Term: 3, LastLogIndex: 1, LastLogTerm: 3},
 			wantSuccess:  false,
@@ -92,7 +92,7 @@ func TestHandleVoteRequest(t *testing.T) {
 		{
 			name: "grants a candidate with the same last term and an equal-or-longer log",
 			core: func(t *testing.T) *Core {
-				return newTestCore(t, 1, []uint64{1, 2, 3}, withTerm(3), withLog(Entry{term: 2}, Entry{term: 3}))
+				return newTestCore(t, 1, []uint64{1, 2, 3}, withTerm(3), withLog(Entry{Term: 2}, Entry{Term: 3}))
 			},
 			req:          Message{Type: MsgVoteRequest, FromId: 2, Term: 3, LastLogIndex: 2, LastLogTerm: 3},
 			wantSuccess:  true,

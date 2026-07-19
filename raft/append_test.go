@@ -33,7 +33,7 @@ func TestHandleAppendEntriesRequest(t *testing.T) {
 		{
 			name: "rejects when the term at prevLogIndex doesn't match",
 			core: func(t *testing.T) *Core {
-				return newTestCore(t, 2, []uint64{1, 2, 3}, withTerm(2), withLog(Entry{term: 1})) // log: [dummy@0, e@1(term1)]
+				return newTestCore(t, 2, []uint64{1, 2, 3}, withTerm(2), withLog(Entry{Term: 1})) // log: [dummy@0, e@1(term1)]
 			},
 			req:         Message{Type: MsgAppendRequest, FromId: 1, Term: 2, LastLogIndex: 1, LastLogTerm: 2},
 			wantSuccess: false,
@@ -45,12 +45,12 @@ func TestHandleAppendEntriesRequest(t *testing.T) {
 				return newTestCore(t, 2, []uint64{1, 2, 3}, withTerm(1))
 			},
 			req: Message{Type: MsgAppendRequest, FromId: 1, Term: 1,
-				Entries: []Entry{{cmd: "x", term: 1}}},
+				Entries: []Entry{{Cmd: "x", Term: 1}}},
 			wantSuccess:      true,
 			wantTerm:         1,
 			wantLastLogIndex: 1,
 			check: func(t *testing.T, c *Core) {
-				if len(c.log) != 2 || c.log[1].cmd != "x" {
+				if len(c.log) != 2 || c.log[1].Cmd != "x" {
 					t.Fatalf("log = %+v, want dummy + {x,1}", c.log)
 				}
 			},
@@ -59,15 +59,15 @@ func TestHandleAppendEntriesRequest(t *testing.T) {
 			name: "truncates a conflicting suffix and appends the leader's entries",
 			core: func(t *testing.T) *Core {
 				return newTestCore(t, 2, []uint64{1, 2, 3}, withTerm(3),
-					withLog(Entry{cmd: "old1", term: 2}, Entry{cmd: "old2", term: 2}))
+					withLog(Entry{Cmd: "old1", Term: 2}, Entry{Cmd: "old2", Term: 2}))
 			},
 			req: Message{Type: MsgAppendRequest, FromId: 1, Term: 3,
-				Entries: []Entry{{cmd: "new1", term: 3}}},
+				Entries: []Entry{{Cmd: "new1", Term: 3}}},
 			wantSuccess:      true,
 			wantTerm:         3,
 			wantLastLogIndex: 1,
 			check: func(t *testing.T, c *Core) {
-				if len(c.log) != 2 || c.log[1].cmd != "new1" {
+				if len(c.log) != 2 || c.log[1].Cmd != "new1" {
 					t.Fatalf("log = %+v, want conflicting suffix replaced with {new1,3}", c.log)
 				}
 			},
@@ -78,7 +78,7 @@ func TestHandleAppendEntriesRequest(t *testing.T) {
 				return newTestCore(t, 2, []uint64{1, 2, 3}, withTerm(1))
 			},
 			req: Message{Type: MsgAppendRequest, FromId: 1, Term: 1,
-				Entries: []Entry{{cmd: "x", term: 1}}, CommitIndex: 99},
+				Entries: []Entry{{Cmd: "x", Term: 1}}, CommitIndex: 99},
 			wantSuccess:      true,
 			wantTerm:         1,
 			wantLastLogIndex: 1,
@@ -131,7 +131,7 @@ func TestHandleAppendEntriesRequest(t *testing.T) {
 func TestHandleAppendEntriesResponse(t *testing.T) {
 	t.Run("advances nextIndex/matchIndex on success", func(t *testing.T) {
 		c := newTestCore(t, 1, []uint64{1, 2, 3}, withTerm(1), withState(LeaderState),
-			withLog(Entry{term: 1}, Entry{term: 1}, Entry{term: 1}), // log: [dummy@0..e@3], so index 3 is valid
+			withLog(Entry{Term: 1}, Entry{Term: 1}, Entry{Term: 1}), // log: [dummy@0..e@3], so index 3 is valid
 			withNextIndex(2, 1), withMatchIndex(2, 0))
 		c.Step(Message{Type: MsgAppendResponse, FromId: 2, Term: 1, Success: true, LastLogIndex: 3})
 
@@ -153,7 +153,7 @@ func TestHandleAppendEntriesResponse(t *testing.T) {
 
 	t.Run("commits a current-term entry once a majority has acked it", func(t *testing.T) {
 		c := newTestCore(t, 1, []uint64{1, 2, 3}, withTerm(2), withState(LeaderState),
-			withLog(Entry{term: 1}, Entry{term: 2})) // log: [dummy@0, e@1(term1), e@2(term2=current)]
+			withLog(Entry{Term: 1}, Entry{Term: 2})) // log: [dummy@0, e@1(term1), e@2(term2=current)]
 		c.Step(Message{Type: MsgAppendResponse, FromId: 2, Term: 2, Success: true, LastLogIndex: 2})
 		if c.commitIndex != 2 {
 			t.Fatalf("commitIndex = %d, want 2", c.commitIndex)
@@ -162,14 +162,14 @@ func TestHandleAppendEntriesResponse(t *testing.T) {
 
 	t.Run("§5.4.2: a majority on an OLD-term entry alone must not commit it (Figure 8)", func(t *testing.T) {
 		c := newTestCore(t, 3, []uint64{1, 2, 3}, withTerm(3), withState(LeaderState),
-			withLog(Entry{cmd: "a", term: 1}, Entry{cmd: "b", term: 2})) // log: [dummy@0, a@1(term1), b@2(term2)]
+			withLog(Entry{Cmd: "a", Term: 1}, Entry{Cmd: "b", Term: 2})) // log: [dummy@0, a@1(term1), b@2(term2)]
 		// self (id 3) + peer 2 is already 2 of 3 = majority, but entry at
 		// index 2 is from term 2, not the leader's current term 3.
 		c.Step(Message{Type: MsgAppendResponse, FromId: 2, Term: 3, Success: true, LastLogIndex: 2})
 		if c.commitIndex != 0 {
 			t.Fatalf("commitIndex = %d, want 0 — committed an entry (term %d) predating the leader's current term (%d); "+
-				"delete the c.log[index].term == c.currentTerm guard and this test should fail",
-				c.commitIndex, c.log[2].term, c.currentTerm)
+				"delete the c.log[index].Term == c.currentTerm guard and this test should fail",
+				c.commitIndex, c.log[2].Term, c.currentTerm)
 		}
 	})
 

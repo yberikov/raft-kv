@@ -32,8 +32,8 @@ type Core struct {
 
 type (
 	Entry struct {
-		cmd  any
-		term uint64
+		Cmd  any
+		Term uint64
 	}
 
 	stateType string
@@ -64,7 +64,7 @@ func NewCore(id uint64, peers []uint64, minElectionTicks, maxElectionTicks int, 
 		matchIndex:       map[uint64]int{},
 	}
 	c.resetElectionTimer()
-	c.log = append(c.log, Entry{cmd: nil, term: 0})
+	c.log = append(c.log, Entry{Cmd: nil, Term: 0})
 	return c
 }
 
@@ -74,6 +74,7 @@ func (c *Core) Status() Status {
 		Term:        c.currentTerm,
 		State:       c.state,
 		CommitIndex: c.commitIndex,
+		Log:         append([]Entry(nil), c.log...),
 	}
 }
 
@@ -153,9 +154,9 @@ func (c *Core) handleVoteRequest(m Message) {
 	}
 
 	if c.votedFor == 0 || c.votedFor == m.FromId {
-		termCond := c.lastTerm() < m.LastLogTerm
+		TermCond := c.lastTerm() < m.LastLogTerm
 		indexCond := c.lastTerm() == m.LastLogTerm && c.lastIndex() <= m.LastLogIndex
-		if termCond || indexCond {
+		if TermCond || indexCond {
 			c.votedFor = m.FromId
 			resp.Success = true
 		}
@@ -207,7 +208,7 @@ func (c *Core) handleAppendEntriesRequest(m Message) {
 		return
 	}
 
-	if c.lastIndex() >= m.LastLogIndex && c.log[m.LastLogIndex].term != m.LastLogTerm {
+	if c.lastIndex() >= m.LastLogIndex && c.log[m.LastLogIndex].Term != m.LastLogTerm {
 		c.resetElectionTimer()
 		resp.Success = false
 		c.msgs = append(c.msgs, resp)
@@ -222,7 +223,7 @@ func (c *Core) handleAppendEntriesRequest(m Message) {
 			startingPoint = i
 			break
 		}
-		if c.log[index].term != entry.term {
+		if c.log[index].Term != entry.Term {
 			c.log = c.log[:index]
 			startingPoint = i
 			break
@@ -263,7 +264,7 @@ func (c *Core) handleAppendEntriesResponse(m Message) {
 	if index <= c.commitIndex {
 		return
 	}
-	if c.log[index].term != c.currentTerm {
+	if c.log[index].Term != c.currentTerm {
 		return
 	}
 
@@ -297,7 +298,7 @@ func (c *Core) replicateLog() {
 			Type:         MsgAppendRequest,
 			FromId:       c.id,
 			ToId:         peer,
-			LastLogTerm:  prevLogEntry.term,
+			LastLogTerm:  prevLogEntry.Term,
 			LastLogIndex: c.nextIndex[peer] - 1,
 			Entries:      log,
 			CommitIndex:  c.commitIndex,
@@ -318,7 +319,7 @@ func (c *Core) lastTerm() uint64 {
 	if len(c.log) == 0 {
 		return c.startTerm
 	}
-	return c.log[len(c.log)-1].term
+	return c.log[len(c.log)-1].Term
 }
 
 func (c *Core) lastIndex() int {

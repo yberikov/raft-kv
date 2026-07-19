@@ -5,4 +5,5 @@ type Status struct {
 	Term        uint64
 	State       stateType
 	CommitIndex int
+	Log         []Entry
 }

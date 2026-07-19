@@ -62,3 +62,67 @@ func TestCheckElectionSafety(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckLogMatching(t *testing.T) {
+	dummy := raft.Entry{Cmd: nil, Term: 0}
+
+	tests := []struct {
+		name      string
+		statuses  []raft.Status
+		wantError bool
+	}{
+		{
+			name: "identical logs are fine",
+			statuses: []raft.Status{
+				{Id: 1, Log: []raft.Entry{dummy, {Cmd: "a", Term: 1}, {Cmd: "b", Term: 2}}},
+				{Id: 2, Log: []raft.Entry{dummy, {Cmd: "a", Term: 1}, {Cmd: "b", Term: 2}}},
+			},
+			wantError: false,
+		},
+		{
+			name: "a shorter log that matches the common prefix is fine (still catching up)",
+			statuses: []raft.Status{
+				{Id: 1, Log: []raft.Entry{dummy, {Cmd: "a", Term: 1}, {Cmd: "b", Term: 2}}},
+				{Id: 2, Log: []raft.Entry{dummy, {Cmd: "a", Term: 1}}},
+			},
+			wantError: false,
+		},
+		{
+			name: "a diverged tail from an older term is fine — it's normal pre-repair state, not a violation",
+			statuses: []raft.Status{
+				{Id: 1, Log: []raft.Entry{dummy, {Cmd: "a", Term: 5}, {Cmd: "b", Term: 5}}},
+				{Id: 2, Log: []raft.Entry{dummy, {Cmd: "x", Term: 3}, {Cmd: "y", Term: 3}, {Cmd: "z", Term: 4}}},
+			},
+			wantError: false,
+		},
+		{
+			name: "same index and term but different command is a violation",
+			statuses: []raft.Status{
+				{Id: 1, Log: []raft.Entry{dummy, {Cmd: "a", Term: 1}, {Cmd: "b", Term: 2}, {Cmd: "c", Term: 2}}},
+				{Id: 2, Log: []raft.Entry{dummy, {Cmd: "a", Term: 1}, {Cmd: "b", Term: 2}, {Cmd: "X", Term: 2}}},
+			},
+			wantError: true,
+		},
+		{
+			name: "violation surfaces across a three-node cluster even when only one pair disagrees",
+			statuses: []raft.Status{
+				{Id: 1, Log: []raft.Entry{dummy, {Cmd: "a", Term: 1}}},
+				{Id: 2, Log: []raft.Entry{dummy, {Cmd: "a", Term: 1}}},
+				{Id: 3, Log: []raft.Entry{dummy, {Cmd: "X", Term: 1}}},
+			},
+			wantError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := CheckLogMatching(tt.statuses)
+			if tt.wantError && err == nil {
+				t.Fatalf("expected a log matching violation, got nil")
+			}
+			if !tt.wantError && err != nil {
+				t.Fatalf("expected no violation, got: %v", err)
+			}
+		})
+	}
+}
