@@ -68,6 +68,15 @@ func NewCore(id uint64, peers []uint64, minElectionTicks, maxElectionTicks int, 
 	return c
 }
 
+func (c *Core) Status() Status {
+	return Status{
+		Id:          c.id,
+		Term:        c.currentTerm,
+		State:       c.state,
+		CommitIndex: c.commitIndex,
+	}
+}
+
 func (c *Core) Step(m Message) {
 	switch m.Type {
 	case MsgVoteRequest:
