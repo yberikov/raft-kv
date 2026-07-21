@@ -5,6 +5,47 @@ import (
 	"raft-kv/raft"
 )
 
+type CommittedLog struct {
+	log map[int]raft.Entry
+}
+
+func NewCommittedLog() CommittedLog {
+	log := make(map[int]raft.Entry)
+	return CommittedLog{log: log}
+}
+
+func (c CommittedLog) Merge(statuses []raft.Status) error {
+	for _, status := range statuses {
+		for i := 0; i <= status.CommitIndex && i < len(status.Log); i++ {
+			if existing, ok := c.log[i]; ok {
+				if existing.Term != status.Log[i].Term || existing.Cmd != status.Log[i].Cmd {
+					return fmt.Errorf("state machine safety violated at index %d: %v != %v", i, existing, status.Log[i])
+				}
+
+			}
+			c.log[i] = status.Log[i]
+		}
+	}
+	return nil
+}
+
+func (c CommittedLog) CheckLeaderCompleteness(status raft.Status) error {
+	if status.State != raft.LeaderState {
+		return nil
+	}
+	for i, entry := range c.log {
+
+		if i >= len(status.Log) {
+			return fmt.Errorf("LeaderCompleteness violated at index %d, index does not exist in leader", i)
+		}
+		if entry.Term != status.Log[i].Term || entry.Cmd != status.Log[i].Cmd {
+			return fmt.Errorf("LeaderCompleteness violated at index %d: %v != %v", i, entry, status.Log[i])
+		}
+
+	}
+	return nil
+}
+
 func CheckElectionSafety(statuses []raft.Status) error {
 	mp := make(map[uint64]raft.Status)
 
