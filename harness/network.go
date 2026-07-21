@@ -14,6 +14,14 @@ type Network struct {
 	seqN  uint64
 }
 
+func NewNetwork(rng *rand.Rand, chaos ChaosConfig) *Network {
+	network := &Network{rng: rng, chaos: chaos}
+	network.queue = make(deliveryHeap, 0)
+	heap.Init(&network.queue)
+
+	return network
+}
+
 func (n *Network) Send(ms ...raft.Message) {
 
 	for _, message := range ms {

@@ -23,16 +23,16 @@ func testSeed(t *testing.T) int64 {
 	return seed
 }
 
-func newTrio(seed int64) (map[uint64]*raft.Core, []uint64) {
-	ids := []uint64{1, 2, 3}
-	nodes := map[uint64]*raft.Core{}
+func newTrio(seed int64) (map[int]*raft.Core, []int) {
+	ids := []int{1, 2, 3}
+	nodes := map[int]*raft.Core{}
 	for _, id := range ids {
 		nodes[id] = raft.NewCore(id, ids, 10, 20, rand.New(rand.NewSource(seed+int64(id))), 3)
 	}
 	return nodes, ids
 }
 
-func leaderOf(nodes map[uint64]*raft.Core, ids []uint64) uint64 {
+func leaderOf(nodes map[int]*raft.Core, ids []int) int {
 	for _, id := range ids {
 		status := nodes[id].Status()
 		if status.State == raft.LeaderState {
@@ -42,7 +42,7 @@ func leaderOf(nodes map[uint64]*raft.Core, ids []uint64) uint64 {
 	return 0
 }
 
-func runTicks(net *Network, nodes map[uint64]*raft.Core, ids []uint64, n int) {
+func runTicks(net *Network, nodes map[int]*raft.Core, ids []int, n int) {
 	for i := 0; i < n; i++ {
 		for _, id := range ids {
 			nodes[id].Tick()

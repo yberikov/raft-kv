@@ -33,13 +33,13 @@ func withState(s stateType) coreOpt {
 	return func(c *Core) { c.state = s }
 }
 
-func withVotedFor(id uint64) coreOpt {
+func withVotedFor(id int) coreOpt {
 	return func(c *Core) { c.votedFor = id }
 }
 
-func withVotesGranted(ids ...uint64) coreOpt {
+func withVotesGranted(ids ...int) coreOpt {
 	return func(c *Core) {
-		c.votesGranted = map[uint64]bool{}
+		c.votesGranted = map[int]bool{}
 		for _, id := range ids {
 			c.votesGranted[id] = true
 		}
@@ -56,18 +56,18 @@ func withCommitIndex(idx int) coreOpt {
 	return func(c *Core) { c.commitIndex = idx }
 }
 
-func withNextIndex(peer uint64, idx int) coreOpt {
+func withNextIndex(peer int, idx int) coreOpt {
 	return func(c *Core) { c.nextIndex[peer] = idx }
 }
 
-func withMatchIndex(peer uint64, idx int) coreOpt {
+func withMatchIndex(peer int, idx int) coreOpt {
 	return func(c *Core) { c.matchIndex[peer] = idx }
 }
 
 // newTestCore builds a Core seeded deterministically from the test's seed
 // (see testSeed), then applies opts to drop it directly into whatever state
 // a test case needs without driving it there through a sequence of messages.
-func newTestCore(t *testing.T, id uint64, peers []uint64, opts ...coreOpt) *Core {
+func newTestCore(t *testing.T, id int, peers []int, opts ...coreOpt) *Core {
 	t.Helper()
 	seed := testSeed(t)
 	rng := rand.New(rand.NewSource(seed))

@@ -193,40 +193,44 @@ func TestCheckLeaderCompleteness(t *testing.T) {
 
 	tests := []struct {
 		name      string
-		status    raft.Status
+		statuses  []raft.Status
 		wantError bool
 	}{
 		{
 			name: "a follower is never checked, regardless of its log",
-			status: raft.Status{
-				Id: 1, State: raft.FollowerState,
-				Log: []raft.Entry{dummy},
+			statuses: []raft.Status{
+				{Id: 1, State: raft.FollowerState, Log: []raft.Entry{dummy}},
 			},
 			wantError: false,
 		},
 		{
 			name: "a leader missing a committed entry entirely is a violation",
-			status: raft.Status{
-				Id: 1, State: raft.LeaderState,
-				Log: []raft.Entry{dummy, {Cmd: "a", Term: 1}},
+			statuses: []raft.Status{
+				{Id: 1, State: raft.LeaderState, Log: []raft.Entry{dummy, {Cmd: "a", Term: 1}}},
 			},
 			wantError: true,
 		},
 		{
 			name: "a leader with a conflicting entry at a committed index is a violation",
-			status: raft.Status{
-				Id: 1, State: raft.LeaderState,
-				Log: []raft.Entry{dummy, {Cmd: "X", Term: 1}, {}, {}, {}, {Cmd: "z", Term: 3}},
+			statuses: []raft.Status{
+				{Id: 1, State: raft.LeaderState, Log: []raft.Entry{dummy, {Cmd: "X", Term: 1}, {}, {}, {}, {Cmd: "z", Term: 3}}},
 			},
 			wantError: true,
 		},
 		{
 			name: "a leader holding every committed entry is fine",
-			status: raft.Status{
-				Id: 1, State: raft.LeaderState,
-				Log: []raft.Entry{dummy, {Cmd: "a", Term: 1}, {}, {}, {}, {Cmd: "z", Term: 3}},
+			statuses: []raft.Status{
+				{Id: 1, State: raft.LeaderState, Log: []raft.Entry{dummy, {Cmd: "a", Term: 1}, {}, {}, {}, {Cmd: "z", Term: 3}}},
 			},
 			wantError: false,
+		},
+		{
+			name: "every coexisting leader gets checked, not just one",
+			statuses: []raft.Status{
+				{Id: 1, State: raft.LeaderState, Log: []raft.Entry{dummy, {Cmd: "a", Term: 1}, {}, {}, {}, {Cmd: "z", Term: 3}}},
+				{Id: 2, State: raft.LeaderState, Log: []raft.Entry{dummy, {Cmd: "a", Term: 1}}},
+			},
+			wantError: true,
 		},
 	}
 
@@ -236,7 +240,7 @@ func TestCheckLeaderCompleteness(t *testing.T) {
 			for i, e := range canonical {
 				cl.log[i] = e
 			}
-			err := cl.CheckLeaderCompleteness(tt.status)
+			err := cl.CheckLeaderCompleteness(tt.statuses)
 			if tt.wantError && err == nil {
 				t.Fatalf("expected a leader completeness violation, got nil")
 			}

@@ -29,19 +29,21 @@ func (c CommittedLog) Merge(statuses []raft.Status) error {
 	return nil
 }
 
-func (c CommittedLog) CheckLeaderCompleteness(status raft.Status) error {
-	if status.State != raft.LeaderState {
-		return nil
-	}
-	for i, entry := range c.log {
-
-		if i >= len(status.Log) {
-			return fmt.Errorf("LeaderCompleteness violated at index %d, index does not exist in leader", i)
+func (c CommittedLog) CheckLeaderCompleteness(statuses []raft.Status) error {
+	for _, status := range statuses {
+		if status.State != raft.LeaderState {
+			continue
 		}
-		if entry.Term != status.Log[i].Term || entry.Cmd != status.Log[i].Cmd {
-			return fmt.Errorf("LeaderCompleteness violated at index %d: %v != %v", i, entry, status.Log[i])
-		}
+		for i, entry := range c.log {
 
+			if i >= len(status.Log) {
+				return fmt.Errorf("LeaderCompleteness violated at index %d, index does not exist in leader", i)
+			}
+			if entry.Term != status.Log[i].Term || entry.Cmd != status.Log[i].Cmd {
+				return fmt.Errorf("LeaderCompleteness violated at index %d: %v != %v", i, entry, status.Log[i])
+			}
+
+		}
 	}
 	return nil
 }

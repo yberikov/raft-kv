@@ -3,10 +3,10 @@ package raft
 import "math/rand"
 
 type Core struct {
-	id          uint64
-	peers       []uint64
+	id          int
+	peers       []int
 	currentTerm uint64
-	votedFor    uint64
+	votedFor    int
 	state       stateType
 	log         []Entry
 	commitIndex int
@@ -16,12 +16,12 @@ type Core struct {
 	electionTimeout  int
 	rng              *rand.Rand
 	electionElapsed  int
-	votesGranted     map[uint64]bool
+	votesGranted     map[int]bool
 
 	replicatePeriod  int
 	replicateElapsed int
-	nextIndex        map[uint64]int // nodeID - index
-	matchIndex       map[uint64]int
+	nextIndex        map[int]int // nodeID - index
+	matchIndex       map[int]int
 
 	// init values after recovery
 	startIndex int
@@ -46,13 +46,13 @@ var (
 	CandidateState stateType = "candidate"
 )
 
-func NewCore(id uint64, peers []uint64, minElectionTicks, maxElectionTicks int, rng *rand.Rand, replicatePeriod int) *Core {
+func NewCore(id int, peers []int, minElectionTicks, maxElectionTicks int, rng *rand.Rand, replicatePeriod int) *Core {
 	c := &Core{
 		id:               id,
 		peers:            peers,
 		currentTerm:      0,
 		votedFor:         0,
-		votesGranted:     map[uint64]bool{},
+		votesGranted:     map[int]bool{},
 		state:            FollowerState,
 		log:              make([]Entry, 0),
 		commitIndex:      0,
@@ -60,8 +60,8 @@ func NewCore(id uint64, peers []uint64, minElectionTicks, maxElectionTicks int, 
 		maxElectionTicks: maxElectionTicks,
 		rng:              rng,
 		replicatePeriod:  replicatePeriod,
-		nextIndex:        map[uint64]int{},
-		matchIndex:       map[uint64]int{},
+		nextIndex:        map[int]int{},
+		matchIndex:       map[int]int{},
 	}
 	c.resetElectionTimer()
 	c.log = append(c.log, Entry{Cmd: nil, Term: 0})
@@ -88,6 +88,8 @@ func (c *Core) Step(m Message) {
 		c.handleAppendEntriesRequest(m)
 	case MsgAppendResponse:
 		c.handleAppendEntriesResponse(m)
+	case MsgProposeRequest:
+		c.handleProposeRequest(m)
 	}
 }
 
@@ -99,7 +101,7 @@ func (c *Core) Tick() {
 	if c.state != LeaderState && c.electionElapsed > c.electionTimeout {
 		c.state = CandidateState
 		c.currentTerm++
-		c.votesGranted = map[uint64]bool{c.id: true}
+		c.votesGranted = map[int]bool{c.id: true}
 		c.votedFor = c.id
 		c.resetElectionTimer()
 
@@ -282,6 +284,15 @@ func (c *Core) handleAppendEntriesResponse(m Message) {
 	}
 }
 
+func (c *Core) handleProposeRequest(msg Message) {
+	if c.state != LeaderState {
+		return
+	}
+	for _, cmd := range msg.ProposeCmd {
+		c.log = append(c.log, Entry{Cmd: cmd, Term: c.currentTerm})
+	}
+}
+
 func (c *Core) replicateLog() {
 
 	for _, peer := range c.peers {
@@ -311,7 +322,7 @@ func (c *Core) becomeFollower(newTerm uint64) {
 	c.state = FollowerState
 	c.currentTerm = newTerm
 	c.votedFor = 0
-	c.votesGranted = make(map[uint64]bool)
+	c.votesGranted = make(map[int]bool)
 	c.resetElectionTimer()
 }
 

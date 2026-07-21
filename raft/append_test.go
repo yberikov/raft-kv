@@ -15,7 +15,7 @@ func TestHandleAppendEntriesRequest(t *testing.T) {
 		{
 			name: "rejects stale term",
 			core: func(t *testing.T) *Core {
-				return newTestCore(t, 2, []uint64{1, 2, 3}, withTerm(5))
+				return newTestCore(t, 2, []int{1, 2, 3}, withTerm(5))
 			},
 			req:         Message{Type: MsgAppendRequest, FromId: 1, Term: 3},
 			wantSuccess: false,
@@ -24,7 +24,7 @@ func TestHandleAppendEntriesRequest(t *testing.T) {
 		{
 			name: "rejects when the log is shorter than prevLogIndex",
 			core: func(t *testing.T) *Core {
-				return newTestCore(t, 2, []uint64{1, 2, 3}, withTerm(1))
+				return newTestCore(t, 2, []int{1, 2, 3}, withTerm(1))
 			},
 			req:         Message{Type: MsgAppendRequest, FromId: 1, Term: 1, LastLogIndex: 5, LastLogTerm: 1},
 			wantSuccess: false,
@@ -33,7 +33,7 @@ func TestHandleAppendEntriesRequest(t *testing.T) {
 		{
 			name: "rejects when the term at prevLogIndex doesn't match",
 			core: func(t *testing.T) *Core {
-				return newTestCore(t, 2, []uint64{1, 2, 3}, withTerm(2), withLog(Entry{Term: 1})) // log: [dummy@0, e@1(term1)]
+				return newTestCore(t, 2, []int{1, 2, 3}, withTerm(2), withLog(Entry{Term: 1})) // log: [dummy@0, e@1(term1)]
 			},
 			req:         Message{Type: MsgAppendRequest, FromId: 1, Term: 2, LastLogIndex: 1, LastLogTerm: 2},
 			wantSuccess: false,
@@ -42,7 +42,7 @@ func TestHandleAppendEntriesRequest(t *testing.T) {
 		{
 			name: "accepts and appends onto a matching prefix",
 			core: func(t *testing.T) *Core {
-				return newTestCore(t, 2, []uint64{1, 2, 3}, withTerm(1))
+				return newTestCore(t, 2, []int{1, 2, 3}, withTerm(1))
 			},
 			req: Message{Type: MsgAppendRequest, FromId: 1, Term: 1,
 				Entries: []Entry{{Cmd: "x", Term: 1}}},
@@ -58,7 +58,7 @@ func TestHandleAppendEntriesRequest(t *testing.T) {
 		{
 			name: "truncates a conflicting suffix and appends the leader's entries",
 			core: func(t *testing.T) *Core {
-				return newTestCore(t, 2, []uint64{1, 2, 3}, withTerm(3),
+				return newTestCore(t, 2, []int{1, 2, 3}, withTerm(3),
 					withLog(Entry{Cmd: "old1", Term: 2}, Entry{Cmd: "old2", Term: 2}))
 			},
 			req: Message{Type: MsgAppendRequest, FromId: 1, Term: 3,
@@ -75,7 +75,7 @@ func TestHandleAppendEntriesRequest(t *testing.T) {
 		{
 			name: "advances commitIndex to min(leaderCommit, lastNewEntryIndex)",
 			core: func(t *testing.T) *Core {
-				return newTestCore(t, 2, []uint64{1, 2, 3}, withTerm(1))
+				return newTestCore(t, 2, []int{1, 2, 3}, withTerm(1))
 			},
 			req: Message{Type: MsgAppendRequest, FromId: 1, Term: 1,
 				Entries: []Entry{{Cmd: "x", Term: 1}}, CommitIndex: 99},
@@ -91,7 +91,7 @@ func TestHandleAppendEntriesRequest(t *testing.T) {
 		{
 			name: "a candidate steps down to follower on a valid append from the current term's leader",
 			core: func(t *testing.T) *Core {
-				return newTestCore(t, 2, []uint64{1, 2, 3}, withTerm(1), withState(CandidateState))
+				return newTestCore(t, 2, []int{1, 2, 3}, withTerm(1), withState(CandidateState))
 			},
 			req:         Message{Type: MsgAppendRequest, FromId: 1, Term: 1},
 			wantSuccess: true,
@@ -130,7 +130,7 @@ func TestHandleAppendEntriesRequest(t *testing.T) {
 
 func TestHandleAppendEntriesResponse(t *testing.T) {
 	t.Run("advances nextIndex/matchIndex on success", func(t *testing.T) {
-		c := newTestCore(t, 1, []uint64{1, 2, 3}, withTerm(1), withState(LeaderState),
+		c := newTestCore(t, 1, []int{1, 2, 3}, withTerm(1), withState(LeaderState),
 			withLog(Entry{Term: 1}, Entry{Term: 1}, Entry{Term: 1}), // log: [dummy@0..e@3], so index 3 is valid
 			withNextIndex(2, 1), withMatchIndex(2, 0))
 		c.Step(Message{Type: MsgAppendResponse, FromId: 2, Term: 1, Success: true, LastLogIndex: 3})
@@ -144,7 +144,7 @@ func TestHandleAppendEntriesResponse(t *testing.T) {
 	})
 
 	t.Run("decrements nextIndex on rejection, floored at 0", func(t *testing.T) {
-		c := newTestCore(t, 1, []uint64{1, 2, 3}, withTerm(1), withState(LeaderState), withNextIndex(2, 0))
+		c := newTestCore(t, 1, []int{1, 2, 3}, withTerm(1), withState(LeaderState), withNextIndex(2, 0))
 		c.Step(Message{Type: MsgAppendResponse, FromId: 2, Term: 1, Success: false})
 		if c.nextIndex[2] != 0 {
 			t.Fatalf("nextIndex[2] = %d, want 0 (must not go negative)", c.nextIndex[2])
@@ -152,7 +152,7 @@ func TestHandleAppendEntriesResponse(t *testing.T) {
 	})
 
 	t.Run("commits a current-term entry once a majority has acked it", func(t *testing.T) {
-		c := newTestCore(t, 1, []uint64{1, 2, 3}, withTerm(2), withState(LeaderState),
+		c := newTestCore(t, 1, []int{1, 2, 3}, withTerm(2), withState(LeaderState),
 			withLog(Entry{Term: 1}, Entry{Term: 2})) // log: [dummy@0, e@1(term1), e@2(term2=current)]
 		c.Step(Message{Type: MsgAppendResponse, FromId: 2, Term: 2, Success: true, LastLogIndex: 2})
 		if c.commitIndex != 2 {
@@ -161,7 +161,7 @@ func TestHandleAppendEntriesResponse(t *testing.T) {
 	})
 
 	t.Run("§5.4.2: a majority on an OLD-term entry alone must not commit it (Figure 8)", func(t *testing.T) {
-		c := newTestCore(t, 3, []uint64{1, 2, 3}, withTerm(3), withState(LeaderState),
+		c := newTestCore(t, 3, []int{1, 2, 3}, withTerm(3), withState(LeaderState),
 			withLog(Entry{Cmd: "a", Term: 1}, Entry{Cmd: "b", Term: 2})) // log: [dummy@0, a@1(term1), b@2(term2)]
 		// self (id 3) + peer 2 is already 2 of 3 = majority, but entry at
 		// index 2 is from term 2, not the leader's current term 3.
@@ -174,7 +174,7 @@ func TestHandleAppendEntriesResponse(t *testing.T) {
 	})
 
 	t.Run("commitIndex never regresses", func(t *testing.T) {
-		c := newTestCore(t, 1, []uint64{1, 2, 3}, withTerm(1), withState(LeaderState), withCommitIndex(5))
+		c := newTestCore(t, 1, []int{1, 2, 3}, withTerm(1), withState(LeaderState), withCommitIndex(5))
 		c.Step(Message{Type: MsgAppendResponse, FromId: 2, Term: 1, Success: true, LastLogIndex: 2})
 		if c.commitIndex != 5 {
 			t.Fatalf("commitIndex = %d, want 5 (must never move backwards)", c.commitIndex)
@@ -182,7 +182,7 @@ func TestHandleAppendEntriesResponse(t *testing.T) {
 	})
 
 	t.Run("a higher-term response steps the leader down", func(t *testing.T) {
-		c := newTestCore(t, 1, []uint64{1, 2, 3}, withTerm(1), withState(LeaderState))
+		c := newTestCore(t, 1, []int{1, 2, 3}, withTerm(1), withState(LeaderState))
 		c.Step(Message{Type: MsgAppendResponse, FromId: 2, Term: 5, Success: false})
 		if c.state != FollowerState {
 			t.Fatalf("state = %v, want FollowerState", c.state)
@@ -200,7 +200,7 @@ func TestHandleAppendEntriesResponse(t *testing.T) {
 		// `m.Term != c.currentTerm` into the `!m.Success` branch still
 		// decrements nextIndex for a response that isn't really about the
 		// current replication attempt at all.
-		c := newTestCore(t, 1, []uint64{1, 2, 3}, withTerm(5), withState(LeaderState), withNextIndex(2, 1))
+		c := newTestCore(t, 1, []int{1, 2, 3}, withTerm(5), withState(LeaderState), withNextIndex(2, 1))
 		c.Step(Message{Type: MsgAppendResponse, FromId: 2, Term: 2, Success: true, LastLogIndex: 9})
 		if c.nextIndex[2] != 1 {
 			t.Fatalf("nextIndex[2] = %d, want 1 unchanged — a stale term-2 response was applied while leader is at term 5",

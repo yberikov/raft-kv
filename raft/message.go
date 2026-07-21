@@ -2,8 +2,8 @@ package raft
 
 type Message struct {
 	Term         uint64
-	FromId       uint64
-	ToId         uint64
+	FromId       int
+	ToId         int
 	LastLogIndex int
 	LastLogTerm  uint64
 
@@ -12,6 +12,8 @@ type Message struct {
 
 	Entries     []Entry
 	CommitIndex int
+
+	ProposeCmd []any
 }
 
 var (
@@ -19,4 +21,5 @@ var (
 	MsgVoteResponse   MsgType = "vote_response"
 	MsgAppendRequest  MsgType = "append_request"
 	MsgAppendResponse MsgType = "append_response"
+	MsgProposeRequest MsgType = "propose_request"
 )

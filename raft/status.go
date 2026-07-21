@@ -1,7 +1,7 @@
 package raft
 
 type Status struct {
-	Id          uint64
+	Id          int
 	Term        uint64
 	State       stateType
 	CommitIndex int

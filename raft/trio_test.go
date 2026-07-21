@@ -10,11 +10,11 @@ import (
 // collect Ready() output, route by ToId, repeat. No drops, no delays — that's
 // harness/'s job in Phase 2. This just proves the protocol closes the loop.
 type deliverer struct {
-	nodes map[uint64]*Core
-	ids   []uint64
+	nodes map[int]*Core
+	ids   []int
 }
 
-func newDeliverer(nodes map[uint64]*Core) *deliverer {
+func newDeliverer(nodes map[int]*Core) *deliverer {
 	d := &deliverer{nodes: nodes}
 	for id := range nodes {
 		d.ids = append(d.ids, id)
@@ -39,7 +39,7 @@ func (d *deliverer) round(inbox []Message) []Message {
 	return next
 }
 
-func (d *deliverer) leader() uint64 {
+func (d *deliverer) leader() int {
 	for id, n := range d.nodes {
 		if n.state == LeaderState {
 			return id
@@ -50,8 +50,8 @@ func (d *deliverer) leader() uint64 {
 
 func newTrio(t *testing.T, seed int64) *deliverer {
 	t.Helper()
-	ids := []uint64{1, 2, 3}
-	nodes := map[uint64]*Core{}
+	ids := []int{1, 2, 3}
+	nodes := map[int]*Core{}
 	for _, id := range ids {
 		nodes[id] = NewCore(id, ids, 10, 20, rand.New(rand.NewSource(seed+int64(id))), 3)
 	}
@@ -122,7 +122,7 @@ func TestTrioRepairsDivergedFollower(t *testing.T) {
 		inbox = d.round(inbox)
 	}
 
-	for _, id := range []uint64{2, 3} {
+	for _, id := range []int{2, 3} {
 		if fmt.Sprint(d.nodes[id].log) != fmt.Sprint(leader.log) {
 			t.Fatalf("seed=%d: node %d did not repair to match the leader:\n  node %d: %v\n  leader: %v",
 				seed, id, id, d.nodes[id].log, leader.log)
