@@ -35,7 +35,9 @@ func (c CommittedLog) CheckLeaderCompleteness(statuses []raft.Status) error {
 			continue
 		}
 		for i, entry := range c.log {
-
+			if entry.Term > status.Term {
+				continue
+			}
 			if i >= len(status.Log) {
 				return fmt.Errorf("LeaderCompleteness violated at index %d, index does not exist in leader", i)
 			}

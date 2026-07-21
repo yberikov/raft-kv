@@ -206,31 +206,38 @@ func TestCheckLeaderCompleteness(t *testing.T) {
 		{
 			name: "a leader missing a committed entry entirely is a violation",
 			statuses: []raft.Status{
-				{Id: 1, State: raft.LeaderState, Log: []raft.Entry{dummy, {Cmd: "a", Term: 1}}},
+				{Id: 1, State: raft.LeaderState, Term: 3, Log: []raft.Entry{dummy, {Cmd: "a", Term: 1}}},
 			},
 			wantError: true,
 		},
 		{
 			name: "a leader with a conflicting entry at a committed index is a violation",
 			statuses: []raft.Status{
-				{Id: 1, State: raft.LeaderState, Log: []raft.Entry{dummy, {Cmd: "X", Term: 1}, {}, {}, {}, {Cmd: "z", Term: 3}}},
+				{Id: 1, State: raft.LeaderState, Term: 3, Log: []raft.Entry{dummy, {Cmd: "X", Term: 1}, {}, {}, {}, {Cmd: "z", Term: 3}}},
 			},
 			wantError: true,
 		},
 		{
 			name: "a leader holding every committed entry is fine",
 			statuses: []raft.Status{
-				{Id: 1, State: raft.LeaderState, Log: []raft.Entry{dummy, {Cmd: "a", Term: 1}, {}, {}, {}, {Cmd: "z", Term: 3}}},
+				{Id: 1, State: raft.LeaderState, Term: 3, Log: []raft.Entry{dummy, {Cmd: "a", Term: 1}, {}, {}, {}, {Cmd: "z", Term: 3}}},
 			},
 			wantError: false,
 		},
 		{
 			name: "every coexisting leader gets checked, not just one",
 			statuses: []raft.Status{
-				{Id: 1, State: raft.LeaderState, Log: []raft.Entry{dummy, {Cmd: "a", Term: 1}, {}, {}, {}, {Cmd: "z", Term: 3}}},
-				{Id: 2, State: raft.LeaderState, Log: []raft.Entry{dummy, {Cmd: "a", Term: 1}}},
+				{Id: 1, State: raft.LeaderState, Term: 3, Log: []raft.Entry{dummy, {Cmd: "a", Term: 1}, {}, {}, {}, {Cmd: "z", Term: 3}}},
+				{Id: 2, State: raft.LeaderState, Term: 3, Log: []raft.Entry{dummy, {Cmd: "a", Term: 1}}},
 			},
 			wantError: true,
+		},
+		{
+			name: "a stale leader from a lower term than a committed entry is not held to that entry",
+			statuses: []raft.Status{
+				{Id: 1, State: raft.LeaderState, Term: 1, Log: []raft.Entry{dummy, {Cmd: "a", Term: 1}}},
+			},
+			wantError: false,
 		},
 	}
 
