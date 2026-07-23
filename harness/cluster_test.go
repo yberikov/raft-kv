@@ -12,7 +12,7 @@ func TestClusterWithChaosElectsLeaderAndReplicatesProposedCommands(t *testing.T)
 	seed := testSeed(t)
 	ids := []int{1, 2, 3}
 	chaos := ChaosConfig{DropP: 0.05, DuplicateP: 0.05, MinDelay: 1, MaxDelay: 3}
-	cluster := NewCluster(ids, rand.New(rand.NewSource(seed)), chaos)
+	cluster := NewCluster(ids, seed, rand.New(rand.NewSource(seed)), chaos)
 
 	if err := cluster.Run(600); err != nil {
 		t.Fatalf("seed=%d: safety violation while electing a leader: %v", seed, err)
@@ -76,7 +76,7 @@ func TestClusterWithChaosElectsLeaderAndReplicatesProposedCommands(t *testing.T)
 func TestClusterPartitionAndHeal(t *testing.T) {
 	seed := testSeed(t)
 	ids := []int{1, 2, 3}
-	cluster := NewCluster(ids, rand.New(rand.NewSource(seed)), ChaosConfig{})
+	cluster := NewCluster(ids, seed, rand.New(rand.NewSource(seed)), ChaosConfig{})
 
 	if err := cluster.Run(300); err != nil {
 		t.Fatalf("seed=%d: safety violation while electing the initial leader: %v", seed, err)
@@ -175,7 +175,7 @@ func TestClusterPartitionAndHeal(t *testing.T) {
 func TestClusterElectsLeaderAndReplicatesProposedCommands(t *testing.T) {
 	seed := testSeed(t)
 	ids := []int{1, 2, 3}
-	cluster := NewCluster(ids, rand.New(rand.NewSource(seed)), ChaosConfig{})
+	cluster := NewCluster(ids, seed, rand.New(rand.NewSource(seed)), ChaosConfig{})
 
 	if err := cluster.Run(300); err != nil {
 		t.Fatalf("seed=%d: safety violation while electing a leader: %v", seed, err)

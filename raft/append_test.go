@@ -143,11 +143,11 @@ func TestHandleAppendEntriesResponse(t *testing.T) {
 		}
 	})
 
-	t.Run("decrements nextIndex on rejection, floored at 0", func(t *testing.T) {
-		c := newTestCore(t, 1, []int{1, 2, 3}, withTerm(1), withState(LeaderState), withNextIndex(2, 0))
+	t.Run("decrements nextIndex on rejection, floored at 1", func(t *testing.T) {
+		c := newTestCore(t, 1, []int{1, 2, 3}, withTerm(1), withState(LeaderState), withNextIndex(2, 1))
 		c.Step(Message{Type: MsgAppendResponse, FromId: 2, Term: 1, Success: false})
-		if c.nextIndex[2] != 0 {
-			t.Fatalf("nextIndex[2] = %d, want 0 (must not go negative)", c.nextIndex[2])
+		if c.nextIndex[2] != 1 {
+			t.Fatalf("nextIndex[2] = %d, want 1 (index 0 is the dummy entry, nextIndex must never point below it)", c.nextIndex[2])
 		}
 	})
 

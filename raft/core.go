@@ -193,9 +193,13 @@ func (c *Core) handleAppendEntriesRequest(m Message) {
 		Term:   c.currentTerm,
 	}
 
-	if m.Term > c.currentTerm || (m.Term == c.currentTerm && c.state == CandidateState) {
+	if m.Term > c.currentTerm {
 		resp.Term = m.Term
 		c.becomeFollower(m.Term)
+	}
+	if m.Term == c.currentTerm && c.state == CandidateState {
+		c.state = FollowerState
+		c.resetElectionTimer()
 	}
 
 	if m.Term < c.currentTerm {
@@ -237,7 +241,7 @@ func (c *Core) handleAppendEntriesRequest(m Message) {
 		c.log = append(c.log, m.Entries[startingPoint])
 	}
 	resp.Success = true
-	resp.LastLogIndex = c.lastIndex()
+	resp.LastLogIndex = m.LastLogIndex + len(m.Entries)
 	if m.CommitIndex > c.commitIndex {
 		c.commitIndex = min(m.CommitIndex, c.lastIndex())
 	}
@@ -256,7 +260,7 @@ func (c *Core) handleAppendEntriesResponse(m Message) {
 	}
 
 	if !m.Success {
-		c.nextIndex[m.FromId] = max(c.nextIndex[m.FromId]-1, 0)
+		c.nextIndex[m.FromId] = max(c.nextIndex[m.FromId]-1, 1)
 		return
 	}
 	c.nextIndex[m.FromId] = m.LastLogIndex + 1

@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"fmt"
 	"math/rand"
 	"raft-kv/raft"
 )
@@ -12,10 +13,10 @@ type Cluster struct {
 	committedLog CommittedLog
 }
 
-func NewCluster(ids []int, rng *rand.Rand, chaosConfig ChaosConfig) Cluster {
+func NewCluster(ids []int, seed int64, rng *rand.Rand, chaosConfig ChaosConfig) Cluster {
 	cluster := Cluster{
 		ids:          ids,
-		network:      NewNetwork(rng, chaosConfig),
+		network:      NewNetwork(seed, rng, chaosConfig),
 		committedLog: NewCommittedLog(),
 		nodes:        make(map[int]*raft.Core),
 	}
@@ -44,16 +45,16 @@ func (c Cluster) Run(tick int) error {
 		}
 
 		if err := c.committedLog.Merge(statuses); err != nil {
-			return err
+			return fmt.Errorf("error on seed %v and tick %v: %v", c.network.seed, i, err)
 		}
 		if err := c.committedLog.CheckLeaderCompleteness(statuses); err != nil {
-			return err
+			return fmt.Errorf("error on seed %v and tick %v: %v", c.network.seed, i, err)
 		}
 		if err := CheckLogMatching(statuses); err != nil {
-			return err
+			return fmt.Errorf("error on seed %v and tick %v: %v", c.network.seed, i, err)
 		}
 		if err := CheckElectionSafety(statuses); err != nil {
-			return err
+			return fmt.Errorf("error on seed %v and tick %v: %v", c.network.seed, i, err)
 		}
 	}
 	return nil

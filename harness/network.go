@@ -7,6 +7,7 @@ import (
 )
 
 type Network struct {
+	seed      int64
 	rng       *rand.Rand
 	now       int
 	queue     deliveryHeap
@@ -15,8 +16,8 @@ type Network struct {
 	partition map[int]int
 }
 
-func NewNetwork(rng *rand.Rand, chaos ChaosConfig) *Network {
-	network := &Network{rng: rng, chaos: chaos}
+func NewNetwork(seed int64, rng *rand.Rand, chaos ChaosConfig) *Network {
+	network := &Network{seed: seed, rng: rng, chaos: chaos}
 	network.queue = make(deliveryHeap, 0)
 	network.partition = make(map[int]int)
 	heap.Init(&network.queue)
