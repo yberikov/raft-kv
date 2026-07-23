@@ -1,0 +1,21 @@
+name: Nightly fuzz
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch: {}
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Fuzz sweep (~10k seeds)
+        run: |
+          set -e
+          for i in $(seq 1 50); do
+            go test ./harness/ -run TestFuzzCluster -count=1 -v
+          done
