@@ -27,14 +27,14 @@ func (d *deliverer) round(inbox []Message) []Message {
 		d.nodes[id].Tick()
 	}
 	for _, id := range d.ids {
-		inbox = append(inbox, d.nodes[id].Ready()...)
+		inbox = append(inbox, d.nodes[id].Ready().Messages...)
 	}
 	var next []Message
 	for _, m := range inbox {
 		d.nodes[m.ToId].Step(m)
 	}
 	for _, id := range d.ids {
-		next = append(next, d.nodes[id].Ready()...)
+		next = append(next, d.nodes[id].Ready().Messages...)
 	}
 	return next
 }

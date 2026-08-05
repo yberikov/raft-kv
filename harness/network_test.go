@@ -46,11 +46,11 @@ func runTicks(net *Network, nodes map[int]*raft.Core, ids []int, n int) {
 	for i := 0; i < n; i++ {
 		for _, id := range ids {
 			nodes[id].Tick()
-			net.Send(nodes[id].Ready()...)
+			net.Send(nodes[id].Ready().Messages...)
 		}
 		for _, m := range net.Advance() {
 			nodes[m.ToId].Step(m)
-			net.Send(nodes[m.ToId].Ready()...)
+			net.Send(nodes[m.ToId].Ready().Messages...)
 		}
 	}
 }

@@ -4,26 +4,38 @@ import (
 	"fmt"
 	"math/rand"
 	"raft-kv/raft"
+	"raft-kv/storage"
 )
 
 type Cluster struct {
 	ids          []int
 	nodes        map[int]*raft.Core
 	network      *Network
+	storages     map[int]storage.Storage
+	outbox       map[int][]pendingBatch
 	committedLog CommittedLog
 	debugBuff    RingBuffer
+}
+
+type pendingBatch struct {
+	requiredIndex int
+	messages      []raft.Message
 }
 
 func NewCluster(ids []int, seed int64, rng *rand.Rand, chaosConfig ChaosConfig) Cluster {
 	cluster := Cluster{
 		ids:          ids,
 		network:      NewNetwork(seed, rng, chaosConfig),
+		storages:     make(map[int]storage.Storage),
+		outbox:       make(map[int][]pendingBatch),
 		committedLog: NewCommittedLog(),
 		nodes:        make(map[int]*raft.Core),
 		debugBuff:    NewRingBuffer(50),
 	}
+
 	for _, id := range ids {
 		cluster.nodes[id] = raft.NewCore(id, ids, 10, 20, rng, 3)
+		cluster.storages[id] = storage.NewInMemoryStorage(3)
 	}
 	return cluster
 }
@@ -33,7 +45,30 @@ func (c *Cluster) Run(tick int) error {
 		for _, id := range c.ids {
 			node := c.nodes[id]
 			node.Tick()
-			c.network.Send(node.Ready()...)
+			c.storages[id].Tick()
+			ready := node.Ready()
+			if ready.StateChanged {
+				c.storages[id].PersistState(ready.Term, ready.VotedFor)
+			}
+			if ready.TruncateFrom != 0 {
+				c.storages[id].TruncateFrom(ready.TruncateFrom)
+			}
+			if len(ready.EntriesToPersist) > 0 {
+				c.storages[id].AppendEntries(ready.EntriesToPersist)
+			}
+			if len(ready.Messages) > 0 {
+				requiredIndex := 0
+				if len(ready.EntriesToPersist) > 0 {
+					requiredIndex = c.storages[id].LastIndex()
+				}
+				c.outbox[id] = append(c.outbox[id], pendingBatch{requiredIndex: requiredIndex, messages: ready.Messages})
+			}
+
+			durable := c.storages[id].LastFsyncedIndex()
+			for len(c.outbox[id]) > 0 && c.outbox[id][0].requiredIndex <= durable {
+				c.network.Send(c.outbox[id][0].messages...)
+				c.outbox[id] = c.outbox[id][1:]
+			}
 		}
 		messages := c.network.Advance()
 		for _, msg := range messages {

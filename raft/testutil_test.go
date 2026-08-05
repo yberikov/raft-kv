@@ -83,7 +83,7 @@ func newTestCore(t *testing.T, id int, peers []int, opts ...coreOpt) *Core {
 func stepAndGetResponse(t *testing.T, c *Core, req Message) Message {
 	t.Helper()
 	c.Step(req)
-	msgs := c.Ready()
+	msgs := c.Ready().Messages
 	if len(msgs) != 1 {
 		t.Fatalf("expected exactly 1 response message, got %d: %+v", len(msgs), msgs)
 	}

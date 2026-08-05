@@ -28,6 +28,12 @@ type Core struct {
 	startTerm  uint64
 
 	msgs []Message
+
+	persistedTerm     uint64
+	persistedVotedFor int
+
+	persistedIndex int
+	truncatedFrom  int
 }
 
 type (
@@ -65,6 +71,8 @@ func NewCore(id int, peers []int, minElectionTicks, maxElectionTicks int, rng *r
 	}
 	c.resetElectionTimer()
 	c.log = append(c.log, Entry{Cmd: nil, Term: 0})
+	c.persistedTerm = c.currentTerm
+	c.persistedVotedFor = c.votedFor
 	return c
 }
 
@@ -129,11 +137,41 @@ func (c *Core) Tick() {
 	}
 }
 
-func (c *Core) Ready() []Message {
+func (c *Core) Ready() ReadyState {
 	msgs := c.msgs
 	c.msgs = make([]Message, 0)
-	return msgs
 
+	ready := ReadyState{Messages: msgs}
+	if c.currentTerm != c.persistedTerm || c.votedFor != c.persistedVotedFor {
+		ready.StateChanged = true
+		ready.Term = c.currentTerm
+		ready.VotedFor = c.votedFor
+		c.persistedTerm = c.currentTerm
+		c.persistedVotedFor = c.votedFor
+	}
+
+	if c.truncatedFrom != 0 {
+		ready.TruncateFrom = c.truncatedFrom
+		if c.truncatedFrom-1 < c.persistedIndex {
+			c.persistedIndex = c.truncatedFrom - 1
+		}
+		c.truncatedFrom = 0
+	}
+	if last := c.lastIndex(); last > c.persistedIndex {
+		ready.EntriesToPersist = append([]Entry(nil), c.log[c.persistedIndex+1:last+1]...)
+		c.persistedIndex = last
+	}
+
+	return ready
+}
+
+type ReadyState struct {
+	Messages         []Message
+	StateChanged     bool
+	Term             uint64
+	VotedFor         int
+	EntriesToPersist []Entry
+	TruncateFrom     int
 }
 
 func (c *Core) handleVoteRequest(m Message) {
@@ -230,6 +268,9 @@ func (c *Core) handleAppendEntriesRequest(m Message) {
 			break
 		}
 		if c.log[index].Term != entry.Term {
+			if c.truncatedFrom == 0 || index < c.truncatedFrom {
+				c.truncatedFrom = index
+			}
 			c.log = c.log[:index]
 			startingPoint = i
 			break
