@@ -172,6 +172,211 @@ func TestClusterPartitionAndHeal(t *testing.T) {
 	t.Logf("seed=%d: converged log after heal: %v", seed, finalLeaderStatus.Log)
 }
 
+// TestClusterRestartRecoversPersistedState simulates a crash-and-recover
+// cycle for the leader: its in-memory Core is thrown away and rebuilt via
+// Cluster.Restart, which reads back whatever its Storage persisted. The
+// recovered node must come back with the same term and log a real restart
+// would preserve, but as a follower (state itself is never persisted), and
+// the cluster must go on to re-elect and converge normally afterward.
+func TestClusterRestartRecoversPersistedState(t *testing.T) {
+	seed := testSeed(t)
+	ids := []int{1, 2, 3}
+	cluster := NewCluster(ids, seed, rand.New(rand.NewSource(seed)), ChaosConfig{})
+
+	if err := cluster.Run(300); err != nil {
+		t.Fatalf("seed=%d: safety violation while electing a leader: %v", seed, err)
+	}
+
+	leaderId := 0
+	for _, id := range ids {
+		if cluster.nodes[id].Status().State == raft.LeaderState {
+			leaderId = id
+			break
+		}
+	}
+	if leaderId == 0 {
+		t.Fatalf("seed=%d: no leader elected after 300 ticks", seed)
+	}
+	t.Logf("seed=%d: node %d elected leader", seed, leaderId)
+
+	cluster.nodes[leaderId].Step(raft.Message{
+		Type:       raft.MsgProposeRequest,
+		ProposeCmd: []any{"a", "b", "c"},
+	})
+	if err := cluster.Run(50); err != nil {
+		t.Fatalf("seed=%d: safety violation while replicating: %v", seed, err)
+	}
+
+	beforeStatus := cluster.nodes[leaderId].Status()
+	if beforeStatus.CommitIndex != 3 {
+		t.Fatalf("seed=%d: leader commitIndex = %d, want 3 before restart", seed, beforeStatus.CommitIndex)
+	}
+
+	cluster.Restart(leaderId)
+
+	restarted := cluster.nodes[leaderId].Status()
+	if restarted.State != raft.FollowerState {
+		t.Fatalf("seed=%d: restarted node %d should come back as follower, got %s", seed, leaderId, restarted.State)
+	}
+	if restarted.Term != beforeStatus.Term {
+		t.Fatalf("seed=%d: restarted node %d term = %d, want %d (recovered)", seed, leaderId, restarted.Term, beforeStatus.Term)
+	}
+	if fmt.Sprint(restarted.Log) != fmt.Sprint(beforeStatus.Log) {
+		t.Fatalf("seed=%d: restarted node %d log = %v, want recovered log %v", seed, leaderId, restarted.Log, beforeStatus.Log)
+	}
+
+	if err := cluster.Run(300); err != nil {
+		t.Fatalf("seed=%d: safety violation after restart: %v", seed, err)
+	}
+
+	finalLeaderId := 0
+	for _, id := range ids {
+		if cluster.nodes[id].Status().State == raft.LeaderState {
+			finalLeaderId = id
+			break
+		}
+	}
+	if finalLeaderId == 0 {
+		t.Fatalf("seed=%d: no leader present after restart recovery window", seed)
+	}
+
+	// A freshly (re-)elected leader can only advance commitIndex by
+	// counting replication of entries from its own current term, so it may
+	// not yet reflect the pre-restart commits even though every node
+	// already agrees on them under the hood. Propose something new and
+	// require it to commit, which proves the cluster is actually healthy
+	// post-restart rather than just quiescent.
+	cluster.nodes[finalLeaderId].Step(raft.Message{
+		Type:       raft.MsgProposeRequest,
+		ProposeCmd: []any{"d", "e"},
+	})
+	if err := cluster.Run(300); err != nil {
+		t.Fatalf("seed=%d: safety violation while replicating after restart: %v", seed, err)
+	}
+
+	currentLeaderId := 0
+	for _, id := range ids {
+		if cluster.nodes[id].Status().State == raft.LeaderState {
+			currentLeaderId = id
+			break
+		}
+	}
+	if currentLeaderId == 0 {
+		t.Fatalf("seed=%d: no leader present after post-restart replication window", seed)
+	}
+	leaderStatus := cluster.nodes[currentLeaderId].Status()
+	if leaderStatus.CommitIndex <= beforeStatus.CommitIndex {
+		t.Fatalf("seed=%d: leader %d commitIndex = %d did not advance past pre-restart %d",
+			seed, currentLeaderId, leaderStatus.CommitIndex, beforeStatus.CommitIndex)
+	}
+
+	for _, id := range ids {
+		status := cluster.nodes[id].Status()
+		for i := 0; i <= min(status.CommitIndex, leaderStatus.CommitIndex); i++ {
+			if fmt.Sprint(status.Log[i]) != fmt.Sprint(leaderStatus.Log[i]) {
+				t.Fatalf("seed=%d: node %d diverges from leader %d at committed index %d:\n  node %d: %v\n  leader %d: %v",
+					seed, id, currentLeaderId, i, id, status.Log[i], currentLeaderId, leaderStatus.Log[i])
+			}
+		}
+	}
+	t.Logf("seed=%d: converged after restart, leader %d commitIndex=%d", seed, currentLeaderId, leaderStatus.CommitIndex)
+}
+
+// TestClusterRestartRecoversFromSnapshot exercises the full snapshot
+// persistence path: CompactLog -> Ready() surfaces it -> the driver calls
+// Storage.PersistSnapshot -> Restart rebuilds the node from
+// Storage.SnapshotState() instead of the (now partially discarded) raw log.
+func TestClusterRestartRecoversFromSnapshot(t *testing.T) {
+	seed := testSeed(t)
+	ids := []int{1, 2, 3}
+	cluster := NewCluster(ids, seed, rand.New(rand.NewSource(seed)), ChaosConfig{})
+
+	if err := cluster.Run(300); err != nil {
+		t.Fatalf("seed=%d: safety violation while electing a leader: %v", seed, err)
+	}
+
+	leaderId := 0
+	for _, id := range ids {
+		if cluster.nodes[id].Status().State == raft.LeaderState {
+			leaderId = id
+			break
+		}
+	}
+	if leaderId == 0 {
+		t.Fatalf("seed=%d: no leader elected after 300 ticks", seed)
+	}
+
+	cluster.nodes[leaderId].Step(raft.Message{
+		Type:       raft.MsgProposeRequest,
+		ProposeCmd: []any{"a", "b", "c"},
+	})
+	if err := cluster.Run(50); err != nil {
+		t.Fatalf("seed=%d: safety violation while replicating: %v", seed, err)
+	}
+
+	beforeStatus := cluster.nodes[leaderId].Status()
+	if beforeStatus.CommitIndex != 3 {
+		t.Fatalf("seed=%d: leader commitIndex = %d, want 3 before compaction", seed, beforeStatus.CommitIndex)
+	}
+
+	// Simulate the driver having applied entries 1-2 to a state machine and
+	// compacting them away.
+	termAt2 := beforeStatus.Log[2].Term
+	cluster.nodes[leaderId].CompactLog(2, termAt2, "kv-snapshot-at-2")
+
+	// Give the driver loop a chance to see SnapshotIndex on Ready() and
+	// persist it via Storage.PersistSnapshot.
+	if err := cluster.Run(5); err != nil {
+		t.Fatalf("seed=%d: safety violation after compaction: %v", seed, err)
+	}
+
+	snapIndex, snapTerm, snapData := cluster.storages[leaderId].SnapshotState()
+	if snapIndex != 2 || snapTerm != termAt2 || snapData != "kv-snapshot-at-2" {
+		t.Fatalf("seed=%d: storage SnapshotState = %d/%d/%v, want 2/%d/kv-snapshot-at-2",
+			seed, snapIndex, snapTerm, snapData, termAt2)
+	}
+
+	cluster.Restart(leaderId)
+
+	restarted := cluster.nodes[leaderId].Status()
+	if restarted.StartIndex != 2 {
+		t.Fatalf("seed=%d: restarted node %d StartIndex = %d, want 2", seed, leaderId, restarted.StartIndex)
+	}
+	if len(restarted.Log) != 2 || restarted.Log[0].Cmd != nil || restarted.Log[1].Cmd != "c" {
+		t.Fatalf("seed=%d: restarted node %d Log = %+v, want [boundary@2, c@3]", seed, leaderId, restarted.Log)
+	}
+
+	// Prove the cluster is actually healthy post-restart, not just
+	// quiescent: a fresh proposal must still commit and converge.
+	if err := cluster.Run(300); err != nil {
+		t.Fatalf("seed=%d: safety violation after restart: %v", seed, err)
+	}
+	finalLeaderId := 0
+	for _, id := range ids {
+		if cluster.nodes[id].Status().State == raft.LeaderState {
+			finalLeaderId = id
+			break
+		}
+	}
+	if finalLeaderId == 0 {
+		t.Fatalf("seed=%d: no leader present after restart recovery window", seed)
+	}
+	cluster.nodes[finalLeaderId].Step(raft.Message{
+		Type:       raft.MsgProposeRequest,
+		ProposeCmd: []any{"d", "e"},
+	})
+	if err := cluster.Run(300); err != nil {
+		t.Fatalf("seed=%d: safety violation while replicating after restart: %v", seed, err)
+	}
+
+	leaderStatus := cluster.nodes[finalLeaderId].Status()
+	if leaderStatus.CommitIndex <= beforeStatus.CommitIndex {
+		t.Fatalf("seed=%d: leader %d commitIndex = %d did not advance past pre-compaction %d",
+			seed, finalLeaderId, leaderStatus.CommitIndex, beforeStatus.CommitIndex)
+	}
+	t.Logf("seed=%d: converged after snapshot restart, leader %d commitIndex=%d", seed, finalLeaderId, leaderStatus.CommitIndex)
+}
+
 func TestClusterElectsLeaderAndReplicatesProposedCommands(t *testing.T) {
 	seed := testSeed(t)
 	ids := []int{1, 2, 3}

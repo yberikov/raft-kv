@@ -14,12 +14,18 @@ type Message struct {
 	CommitIndex int
 
 	ProposeCmd []any
+
+	SnapshotIndex int
+	SnapshotTerm  uint64
+	SnapshotData  any
 }
 
 var (
-	MsgVoteRequest    MsgType = "vote_request"
-	MsgVoteResponse   MsgType = "vote_response"
-	MsgAppendRequest  MsgType = "append_request"
-	MsgAppendResponse MsgType = "append_response"
-	MsgProposeRequest MsgType = "propose_request"
+	MsgVoteRequest             MsgType = "vote_request"
+	MsgVoteResponse            MsgType = "vote_response"
+	MsgAppendRequest           MsgType = "append_request"
+	MsgAppendResponse          MsgType = "append_response"
+	MsgProposeRequest          MsgType = "propose_request"
+	MsgInstallSnapshotRequest  MsgType = "install_snapshot_request"
+	MsgInstallSnapshotResponse MsgType = "install_snapshot_response"
 )

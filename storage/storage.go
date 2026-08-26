@@ -11,5 +11,12 @@ type Storage interface {
 	TermAt(index int) uint64
 	TruncateFrom(index int) error
 
+	State() (term uint64, votedFor int)
+
+	PersistSnapshot(index int, term uint64, data any) error
+	SnapshotState() (index int, term uint64, data any)
+
 	Tick()
+
+	ReclaimSegments() error
 }

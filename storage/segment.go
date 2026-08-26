@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -127,9 +128,6 @@ func (s *segmentSet) list() ([]string, error) {
 	return names, nil
 }
 
-// replay walks every segment in order, decoding each record and passing its
-// payload to fn. It stops at the first clean EOF or torn record — either one
-// just means "this is where the log ends," not a fatal error.
 func (s *segmentSet) replay(fn func(payload []byte) error) error {
 	names, err := s.list()
 	if err != nil {
@@ -145,6 +143,25 @@ func (s *segmentSet) replay(fn func(payload []byte) error) error {
 		}
 	}
 	return nil
+}
+
+func (s *segmentSet) deleteBefore(id int) error {
+	ids, err := listSegmentIDs(s.dir)
+	if err != nil {
+		return err
+	}
+	var deleteErr error
+	for _, candidate := range ids {
+		if candidate < id {
+			if err := os.Remove(filepath.Join(s.dir, segmentName(candidate))); err != nil {
+				if deleteErr != nil || errors.Is(err, os.ErrNotExist) {
+					continue
+				}
+				deleteErr = err
+			}
+		}
+	}
+	return deleteErr
 }
 
 func replaySegmentFile(path string, fn func(payload []byte) error) (stop bool, err error) {

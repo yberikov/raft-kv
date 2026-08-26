@@ -23,17 +23,18 @@ type Core struct {
 	nextIndex        map[int]int // nodeID - index
 	matchIndex       map[int]int
 
-	// init values after recovery
-	startIndex int
-	startTerm  uint64
+	startIndex   int
+	startTerm    uint64
+	snapshotData any
 
 	msgs []Message
 
 	persistedTerm     uint64
 	persistedVotedFor int
 
-	persistedIndex int
-	truncatedFrom  int
+	persistedIndex      int
+	truncatedFrom       int
+	persistedStartIndex int
 }
 
 type (
@@ -76,6 +77,19 @@ func NewCore(id int, peers []int, minElectionTicks, maxElectionTicks int, rng *r
 	return c
 }
 
+func (c *Core) Restore(term uint64, votedFor int, log []Entry, startIndex int, startTerm uint64, snapshotData any) {
+	c.currentTerm = term
+	c.votedFor = votedFor
+	c.log = log
+	c.startIndex = startIndex
+	c.startTerm = startTerm
+	c.snapshotData = snapshotData
+	c.persistedTerm = term
+	c.persistedVotedFor = votedFor
+	c.persistedIndex = c.lastIndex()
+	c.persistedStartIndex = startIndex
+}
+
 func (c *Core) Status() Status {
 	return Status{
 		Id:          c.id,
@@ -83,7 +97,20 @@ func (c *Core) Status() Status {
 		State:       c.state,
 		CommitIndex: c.commitIndex,
 		Log:         append([]Entry(nil), c.log...),
+		StartIndex:  c.startIndex,
 	}
+}
+
+func (c *Core) CompactLog(index int, term uint64, data any) {
+	if index <= c.startIndex || index > c.lastIndex() {
+		return
+	}
+	keep := append([]Entry(nil), c.log[index-c.startIndex:]...)
+	keep[0] = Entry{Term: term}
+	c.log = keep
+	c.startIndex = index
+	c.startTerm = term
+	c.snapshotData = data
 }
 
 func (c *Core) Step(m Message) {
@@ -98,6 +125,10 @@ func (c *Core) Step(m Message) {
 		c.handleAppendEntriesResponse(m)
 	case MsgProposeRequest:
 		c.handleProposeRequest(m)
+	case MsgInstallSnapshotRequest:
+		c.handleInstallSnapshotRequest(m)
+	case MsgInstallSnapshotResponse:
+		c.handleInstallSnapshotResponse(m)
 	}
 }
 
@@ -157,8 +188,20 @@ func (c *Core) Ready() ReadyState {
 		}
 		c.truncatedFrom = 0
 	}
+
+	if c.startIndex > c.persistedStartIndex {
+		ready.SnapshotIndex = c.startIndex
+		ready.SnapshotTerm = c.startTerm
+		ready.SnapshotData = c.snapshotData
+		c.persistedStartIndex = c.startIndex
+		if c.persistedIndex < c.startIndex {
+			c.persistedIndex = c.startIndex
+		}
+	}
 	if last := c.lastIndex(); last > c.persistedIndex {
-		ready.EntriesToPersist = append([]Entry(nil), c.log[c.persistedIndex+1:last+1]...)
+		lo := c.persistedIndex + 1 - c.startIndex
+		hi := last + 1 - c.startIndex
+		ready.EntriesToPersist = append([]Entry(nil), c.log[lo:hi]...)
 		c.persistedIndex = last
 	}
 
@@ -172,6 +215,15 @@ type ReadyState struct {
 	VotedFor         int
 	EntriesToPersist []Entry
 	TruncateFrom     int
+
+	// SnapshotIndex is nonzero exactly when a snapshot boundary has advanced
+	// (via CompactLog or a received InstallSnapshot) since the last Ready()
+	// call and hasn't been reported yet. When set, the driver must persist
+	// SnapshotData as the new snapshot before it can safely reclaim any log
+	// storage below SnapshotIndex.
+	SnapshotIndex int
+	SnapshotTerm  uint64
+	SnapshotData  any
 }
 
 func (c *Core) handleVoteRequest(m Message) {
@@ -245,6 +297,13 @@ func (c *Core) handleAppendEntriesRequest(m Message) {
 		c.msgs = append(c.msgs, resp)
 		return
 	}
+	if m.LastLogIndex < c.startIndex {
+		c.resetElectionTimer()
+		resp.Success = false
+		resp.LastLogIndex = c.startIndex
+		c.msgs = append(c.msgs, resp)
+		return
+	}
 	if c.lastIndex() < m.LastLogIndex {
 		c.resetElectionTimer()
 		resp.Success = false
@@ -252,7 +311,7 @@ func (c *Core) handleAppendEntriesRequest(m Message) {
 		return
 	}
 
-	if c.lastIndex() >= m.LastLogIndex && c.log[m.LastLogIndex].Term != m.LastLogTerm {
+	if c.lastIndex() >= m.LastLogIndex && c.log[m.LastLogIndex-c.startIndex].Term != m.LastLogTerm {
 		c.resetElectionTimer()
 		resp.Success = false
 		c.msgs = append(c.msgs, resp)
@@ -263,15 +322,15 @@ func (c *Core) handleAppendEntriesRequest(m Message) {
 	for i := 0; i < len(m.Entries); i++ {
 		entry := m.Entries[i]
 		index := m.LastLogIndex + 1 + i
-		if index >= len(c.log) {
+		if index-c.startIndex >= len(c.log) {
 			startingPoint = i
 			break
 		}
-		if c.log[index].Term != entry.Term {
+		if c.log[index-c.startIndex].Term != entry.Term {
 			if c.truncatedFrom == 0 || index < c.truncatedFrom {
 				c.truncatedFrom = index
 			}
-			c.log = c.log[:index]
+			c.log = c.log[:index-c.startIndex]
 			startingPoint = i
 			break
 		}
@@ -311,7 +370,7 @@ func (c *Core) handleAppendEntriesResponse(m Message) {
 	if index <= c.commitIndex {
 		return
 	}
-	if c.log[index].Term != c.currentTerm {
+	if c.log[index-c.startIndex].Term != c.currentTerm {
 		return
 	}
 
@@ -347,8 +406,12 @@ func (c *Core) replicateLog() {
 		if c.state != LeaderState {
 			return
 		}
-		log := c.log[c.nextIndex[peer]:]
-		prevLogEntry := c.log[c.nextIndex[peer]-1]
+		if c.nextIndex[peer]-1 < c.startIndex {
+			c.sendInstallSnapshot(peer)
+			continue
+		}
+		log := c.log[c.nextIndex[peer]-c.startIndex:]
+		prevLogEntry := c.log[c.nextIndex[peer]-1-c.startIndex]
 		message := Message{
 			Term:         c.currentTerm,
 			Type:         MsgAppendRequest,
@@ -363,6 +426,70 @@ func (c *Core) replicateLog() {
 	}
 }
 
+func (c *Core) sendInstallSnapshot(peer int) {
+	c.msgs = append(c.msgs, Message{
+		Term:          c.currentTerm,
+		Type:          MsgInstallSnapshotRequest,
+		FromId:        c.id,
+		ToId:          peer,
+		SnapshotIndex: c.startIndex,
+		SnapshotTerm:  c.startTerm,
+		SnapshotData:  c.snapshotData,
+	})
+}
+
+func (c *Core) handleInstallSnapshotRequest(m Message) {
+	resp := Message{
+		FromId: c.id,
+		ToId:   m.FromId,
+		Type:   MsgInstallSnapshotResponse,
+		Term:   c.currentTerm,
+	}
+
+	if m.Term < c.currentTerm {
+		c.msgs = append(c.msgs, resp)
+		return
+	}
+	if m.Term > c.currentTerm {
+		resp.Term = m.Term
+		c.becomeFollower(m.Term)
+	}
+	if c.state == CandidateState {
+		c.state = FollowerState
+	}
+	c.resetElectionTimer()
+
+	if m.SnapshotIndex > c.startIndex {
+		if m.SnapshotIndex <= c.lastIndex() && c.log[m.SnapshotIndex-c.startIndex].Term == m.SnapshotTerm {
+
+			c.log = append([]Entry(nil), c.log[m.SnapshotIndex-c.startIndex:]...)
+		} else {
+			c.log = []Entry{{Term: m.SnapshotTerm}}
+		}
+		c.startIndex = m.SnapshotIndex
+		c.startTerm = m.SnapshotTerm
+		c.snapshotData = m.SnapshotData
+		if m.SnapshotIndex > c.commitIndex {
+			c.commitIndex = m.SnapshotIndex
+		}
+	}
+
+	resp.LastLogIndex = c.lastIndex()
+	c.msgs = append(c.msgs, resp)
+}
+
+func (c *Core) handleInstallSnapshotResponse(m Message) {
+	if m.Term > c.currentTerm {
+		c.becomeFollower(m.Term)
+		return
+	}
+	if m.Term != c.currentTerm {
+		return
+	}
+	c.nextIndex[m.FromId] = m.LastLogIndex + 1
+	c.matchIndex[m.FromId] = m.LastLogIndex
+}
+
 func (c *Core) becomeFollower(newTerm uint64) {
 	c.state = FollowerState
 	c.currentTerm = newTerm
@@ -372,17 +499,11 @@ func (c *Core) becomeFollower(newTerm uint64) {
 }
 
 func (c *Core) lastTerm() uint64 {
-	if len(c.log) == 0 {
-		return c.startTerm
-	}
 	return c.log[len(c.log)-1].Term
 }
 
 func (c *Core) lastIndex() int {
-	if len(c.log) == 0 {
-		return 0
-	}
-	return len(c.log) - 1
+	return c.startIndex + len(c.log) - 1
 }
 
 func (c *Core) resetElectionTimer() {

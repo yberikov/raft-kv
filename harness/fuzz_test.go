@@ -40,9 +40,12 @@ func TestFuzzCluster(t *testing.T) {
 		chaos.MaxDelay = chaos.MinDelay + 1 + rng.Intn(3)
 
 		cluster := NewCluster(ids, seed, rng, chaos)
+		cluster.CompactThreshold = 1 + rng.Intn(3)
 
 		doPartition := rng.Float64() < 0.4
 		doPropose := rng.Float64() < 0.7
+		doRestart := rng.Float64() < 0.4
+		doCrash := rng.Float64() < 0.4
 
 		run := func(ticks int) {
 			if err := cluster.Run(ticks); err != nil {
@@ -82,6 +85,16 @@ func TestFuzzCluster(t *testing.T) {
 			}
 
 			cluster.network.Heal()
+		}
+
+		if doRestart {
+			victim := ids[rng.Intn(len(ids))]
+			cluster.Restart(victim)
+		}
+
+		if doCrash {
+			victim := ids[rng.Intn(len(ids))]
+			cluster.Crash(victim)
 		}
 
 		run(100 + rng.Intn(200))
