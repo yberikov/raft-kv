@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"fmt"
 	"math/rand"
 	"testing"
 
@@ -53,19 +54,44 @@ func TestFuzzCluster(t *testing.T) {
 			}
 		}
 
-		propose := func(cmds []any) {
+		// clientID/seq model a single client session across the whole fuzz
+		// iteration, so retries below exercise the state machine's dedup
+		// table the way a real client's at-least-once resend would.
+		clientID := fmt.Sprintf("fuzz-client-%d", seed)
+		seq := uint64(0)
+		nextCmd := func(key string) raft.Command {
+			seq++
+			return raft.Command{Op: raft.OpPut, Key: key, Value: key, ClientID: clientID, Seq: seq}
+		}
+
+		var lastProposed []raft.Command
+		propose := func(cmds []raft.Command) {
 			if leaderId := fuzzLeaderId(cluster, ids); leaderId != 0 {
 				cluster.nodes[leaderId].Step(raft.Message{
 					Type:       raft.MsgProposeRequest,
 					ProposeCmd: cmds,
 				})
 			}
+			lastProposed = cmds
+		}
+		// retryLast simulates a client that didn't get a response in time
+		// (leader change, partition, dropped reply) and resent the exact
+		// same request -- same ClientID/Seq -- which the state machine's
+		// dedup table must suppress rather than re-applying.
+		retryLast := func() {
+			if lastProposed != nil {
+				propose(lastProposed)
+			}
 		}
 
 		run(100 + rng.Intn(200))
 
 		if doPropose {
-			propose([]any{"a", "b", "c"})
+			propose([]raft.Command{nextCmd("a"), nextCmd("b"), nextCmd("c")})
+			if rng.Float64() < 0.4 {
+				run(1 + rng.Intn(20))
+				retryLast()
+			}
 		}
 
 		if doPartition {
@@ -81,7 +107,11 @@ func TestFuzzCluster(t *testing.T) {
 			run(100 + rng.Intn(200))
 
 			if doPropose {
-				propose([]any{"d", "e", "f"})
+				propose([]raft.Command{nextCmd("d"), nextCmd("e"), nextCmd("f")})
+				if rng.Float64() < 0.4 {
+					run(1 + rng.Intn(20))
+					retryLast()
+				}
 			}
 
 			cluster.network.Heal()

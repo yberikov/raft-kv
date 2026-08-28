@@ -7,9 +7,9 @@ import (
 
 func TestCompactLogTrimsAndSetsBoundary(t *testing.T) {
 	c := newTestCore(t, 1, []int{1, 2, 3}, withLog(
-		Entry{Cmd: "a", Term: 1},
-		Entry{Cmd: "b", Term: 1},
-		Entry{Cmd: "c", Term: 2},
+		Entry{Cmd: Command{Key: "a"}, Term: 1},
+		Entry{Cmd: Command{Key: "b"}, Term: 1},
+		Entry{Cmd: Command{Key: "c"}, Term: 2},
 	))
 	// log: [dummy@0(term0), a@1(term1), b@2(term1), c@3(term2)]
 
@@ -31,13 +31,13 @@ func TestCompactLogTrimsAndSetsBoundary(t *testing.T) {
 	if status.StartIndex != 2 {
 		t.Fatalf("Status().StartIndex = %d, want 2", status.StartIndex)
 	}
-	if len(status.Log) != 2 || status.Log[0].Cmd != nil || status.Log[1].Cmd != "c" {
+	if len(status.Log) != 2 || status.Log[0].Cmd != (Command{}) || status.Log[1].Cmd != (Command{Key: "c"}) {
 		t.Fatalf("Status().Log = %+v, want [boundary@2, c@3]", status.Log)
 	}
 }
 
 func TestCompactLogIsNoOpWhenAlreadyCompactedOrOutOfRange(t *testing.T) {
-	c := newTestCore(t, 1, []int{1, 2, 3}, withLog(Entry{Cmd: "a", Term: 1}))
+	c := newTestCore(t, 1, []int{1, 2, 3}, withLog(Entry{Cmd: Command{Key: "a"}, Term: 1}))
 
 	c.CompactLog(1, 1, "d1")
 	if c.startIndex != 1 {
@@ -56,7 +56,7 @@ func TestCompactLogIsNoOpWhenAlreadyCompactedOrOutOfRange(t *testing.T) {
 }
 
 func TestHandleAppendEntriesRequestBehindCompactionReportsStartIndex(t *testing.T) {
-	c := newTestCore(t, 2, []int{1, 2, 3}, withLog(Entry{Cmd: "a", Term: 1}, Entry{Cmd: "b", Term: 1}))
+	c := newTestCore(t, 2, []int{1, 2, 3}, withLog(Entry{Cmd: Command{Key: "a"}, Term: 1}, Entry{Cmd: Command{Key: "b"}, Term: 1}))
 	c.CompactLog(2, 1, "snap") // startIndex=2 now, entry "a" no longer exists
 
 	resp := stepAndGetResponse(t, c, Message{
@@ -72,7 +72,7 @@ func TestHandleAppendEntriesRequestBehindCompactionReportsStartIndex(t *testing.
 }
 
 func TestHandleInstallSnapshotRequestInstallsFreshSnapshot(t *testing.T) {
-	c := newTestCore(t, 2, []int{1, 2, 3}, withLog(Entry{Cmd: "x", Term: 1}))
+	c := newTestCore(t, 2, []int{1, 2, 3}, withLog(Entry{Cmd: Command{Key: "x"}, Term: 1}))
 
 	resp := stepAndGetResponse(t, c, Message{
 		FromId: 1, ToId: 2, Type: MsgInstallSnapshotRequest, Term: 1,
@@ -97,9 +97,9 @@ func TestHandleInstallSnapshotRequestInstallsFreshSnapshot(t *testing.T) {
 
 func TestHandleInstallSnapshotRequestKeepsConsistentSuffix(t *testing.T) {
 	c := newTestCore(t, 2, []int{1, 2, 3}, withLog(
-		Entry{Cmd: "a", Term: 1},
-		Entry{Cmd: "b", Term: 2},
-		Entry{Cmd: "c", Term: 2},
+		Entry{Cmd: Command{Key: "a"}, Term: 1},
+		Entry{Cmd: Command{Key: "b"}, Term: 2},
+		Entry{Cmd: Command{Key: "c"}, Term: 2},
 	))
 	// log: [dummy@0, a@1(t1), b@2(t2), c@3(t2)]
 
@@ -117,13 +117,13 @@ func TestHandleInstallSnapshotRequestKeepsConsistentSuffix(t *testing.T) {
 		t.Fatalf("lastIndex/lastTerm = %d/%d, want 3/2", c.lastIndex(), c.lastTerm())
 	}
 	status := c.Status()
-	if len(status.Log) != 2 || status.Log[1].Cmd != "c" {
+	if len(status.Log) != 2 || status.Log[1].Cmd != (Command{Key: "c"}) {
 		t.Fatalf("Status().Log = %+v, want [boundary@2, c@3]", status.Log)
 	}
 }
 
 func TestHandleInstallSnapshotRequestIgnoresStaleSnapshot(t *testing.T) {
-	c := newTestCore(t, 2, []int{1, 2, 3}, withLog(Entry{Cmd: "a", Term: 1}, Entry{Cmd: "b", Term: 1}))
+	c := newTestCore(t, 2, []int{1, 2, 3}, withLog(Entry{Cmd: Command{Key: "a"}, Term: 1}, Entry{Cmd: Command{Key: "b"}, Term: 1}))
 	c.CompactLog(2, 1, "already-have-this")
 
 	resp := stepAndGetResponse(t, c, Message{
@@ -155,7 +155,7 @@ func TestHandleInstallSnapshotResponseUpdatesLeaderTracking(t *testing.T) {
 
 func TestReplicateLogSendsInstallSnapshotWhenPeerBehindCompaction(t *testing.T) {
 	c := newTestCore(t, 1, []int{1, 2, 3}, withState(LeaderState), withTerm(3),
-		withLog(Entry{Cmd: "a", Term: 1}, Entry{Cmd: "b", Term: 2}, Entry{Cmd: "c", Term: 3}))
+		withLog(Entry{Cmd: Command{Key: "a"}, Term: 1}, Entry{Cmd: Command{Key: "b"}, Term: 2}, Entry{Cmd: Command{Key: "c"}, Term: 3}))
 	c.CompactLog(2, 2, "snap-data")
 	c.nextIndex[2] = 1 // peer needs index 1, which we've compacted away
 	c.nextIndex[3] = 4
@@ -183,9 +183,9 @@ func TestReplicateLogSendsInstallSnapshotWhenPeerBehindCompaction(t *testing.T) 
 
 func TestReadySurfacesSnapshotAfterCompactLog(t *testing.T) {
 	c := newTestCore(t, 1, []int{1, 2, 3}, withLog(
-		Entry{Cmd: "a", Term: 1},
-		Entry{Cmd: "b", Term: 1},
-		Entry{Cmd: "c", Term: 2},
+		Entry{Cmd: Command{Key: "a"}, Term: 1},
+		Entry{Cmd: Command{Key: "b"}, Term: 1},
+		Entry{Cmd: Command{Key: "c"}, Term: 2},
 	))
 	c.Ready() // drain the initial log so only the compaction is under test
 
@@ -207,7 +207,7 @@ func TestReadySurfacesSnapshotAfterCompactLog(t *testing.T) {
 }
 
 func TestReadySurfacesSnapshotAfterInstallSnapshot(t *testing.T) {
-	c := newTestCore(t, 2, []int{1, 2, 3}, withLog(Entry{Cmd: "x", Term: 1}))
+	c := newTestCore(t, 2, []int{1, 2, 3}, withLog(Entry{Cmd: Command{Key: "x"}, Term: 1}))
 	c.Ready()
 
 	// Step directly (not via stepAndGetResponse, which drains Ready() itself
@@ -229,19 +229,19 @@ func TestReadySurfacesSnapshotAfterInstallSnapshot(t *testing.T) {
 // the same Ready() call.
 func TestReadyReportsSnapshotAndEntriesTogether(t *testing.T) {
 	c := newTestCore(t, 1, []int{1, 2, 3}, withLog(
-		Entry{Cmd: "a", Term: 1},
-		Entry{Cmd: "b", Term: 1},
+		Entry{Cmd: Command{Key: "a"}, Term: 1},
+		Entry{Cmd: Command{Key: "b"}, Term: 1},
 	))
 	c.Ready()
 
 	c.CompactLog(1, 1, "snap")
-	c.log = append(c.log, Entry{Cmd: "c", Term: 1})
+	c.log = append(c.log, Entry{Cmd: Command{Key: "c"}, Term: 1})
 
 	ready := c.Ready()
 	if ready.SnapshotIndex != 1 {
 		t.Fatalf("SnapshotIndex = %d, want 1", ready.SnapshotIndex)
 	}
-	if len(ready.EntriesToPersist) != 1 || ready.EntriesToPersist[0].Cmd != "c" {
+	if len(ready.EntriesToPersist) != 1 || ready.EntriesToPersist[0].Cmd != (Command{Key: "c"}) {
 		t.Fatalf("EntriesToPersist = %+v, want [c]", ready.EntriesToPersist)
 	}
 }
@@ -260,7 +260,7 @@ func TestTrioCatchesUpFollowerViaInstallSnapshot(t *testing.T) {
 	leader.currentTerm = 5
 	leader.state = LeaderState
 	for i := 1; i <= 6; i++ {
-		leader.log = append(leader.log, Entry{Cmd: fmt.Sprintf("op-%d", i), Term: 5})
+		leader.log = append(leader.log, Entry{Cmd: Command{Key: fmt.Sprintf("op-%d", i)}, Term: 5})
 	}
 	for _, id := range d.ids {
 		leader.nextIndex[id] = len(leader.log)
@@ -272,7 +272,7 @@ func TestTrioCatchesUpFollowerViaInstallSnapshot(t *testing.T) {
 	// competing election while node 2 catches up.
 	d.nodes[3].currentTerm = 5
 	for i := 1; i <= 6; i++ {
-		d.nodes[3].log = append(d.nodes[3].log, Entry{Cmd: fmt.Sprintf("op-%d", i), Term: 5})
+		d.nodes[3].log = append(d.nodes[3].log, Entry{Cmd: Command{Key: fmt.Sprintf("op-%d", i)}, Term: 5})
 	}
 	d.nodes[3].commitIndex = 6
 

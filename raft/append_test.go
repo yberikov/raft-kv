@@ -45,12 +45,12 @@ func TestHandleAppendEntriesRequest(t *testing.T) {
 				return newTestCore(t, 2, []int{1, 2, 3}, withTerm(1))
 			},
 			req: Message{Type: MsgAppendRequest, FromId: 1, Term: 1,
-				Entries: []Entry{{Cmd: "x", Term: 1}}},
+				Entries: []Entry{{Cmd: Command{Key: "x"}, Term: 1}}},
 			wantSuccess:      true,
 			wantTerm:         1,
 			wantLastLogIndex: 1,
 			check: func(t *testing.T, c *Core) {
-				if len(c.log) != 2 || c.log[1].Cmd != "x" {
+				if len(c.log) != 2 || c.log[1].Cmd != (Command{Key: "x"}) {
 					t.Fatalf("log = %+v, want dummy + {x,1}", c.log)
 				}
 			},
@@ -59,15 +59,15 @@ func TestHandleAppendEntriesRequest(t *testing.T) {
 			name: "truncates a conflicting suffix and appends the leader's entries",
 			core: func(t *testing.T) *Core {
 				return newTestCore(t, 2, []int{1, 2, 3}, withTerm(3),
-					withLog(Entry{Cmd: "old1", Term: 2}, Entry{Cmd: "old2", Term: 2}))
+					withLog(Entry{Cmd: Command{Key: "old1"}, Term: 2}, Entry{Cmd: Command{Key: "old2"}, Term: 2}))
 			},
 			req: Message{Type: MsgAppendRequest, FromId: 1, Term: 3,
-				Entries: []Entry{{Cmd: "new1", Term: 3}}},
+				Entries: []Entry{{Cmd: Command{Key: "new1"}, Term: 3}}},
 			wantSuccess:      true,
 			wantTerm:         3,
 			wantLastLogIndex: 1,
 			check: func(t *testing.T, c *Core) {
-				if len(c.log) != 2 || c.log[1].Cmd != "new1" {
+				if len(c.log) != 2 || c.log[1].Cmd != (Command{Key: "new1"}) {
 					t.Fatalf("log = %+v, want conflicting suffix replaced with {new1,3}", c.log)
 				}
 			},
@@ -78,7 +78,7 @@ func TestHandleAppendEntriesRequest(t *testing.T) {
 				return newTestCore(t, 2, []int{1, 2, 3}, withTerm(1))
 			},
 			req: Message{Type: MsgAppendRequest, FromId: 1, Term: 1,
-				Entries: []Entry{{Cmd: "x", Term: 1}}, CommitIndex: 99},
+				Entries: []Entry{{Cmd: Command{Key: "x"}, Term: 1}}, CommitIndex: 99},
 			wantSuccess:      true,
 			wantTerm:         1,
 			wantLastLogIndex: 1,
@@ -162,7 +162,7 @@ func TestHandleAppendEntriesResponse(t *testing.T) {
 
 	t.Run("§5.4.2: a majority on an OLD-term entry alone must not commit it (Figure 8)", func(t *testing.T) {
 		c := newTestCore(t, 3, []int{1, 2, 3}, withTerm(3), withState(LeaderState),
-			withLog(Entry{Cmd: "a", Term: 1}, Entry{Cmd: "b", Term: 2})) // log: [dummy@0, a@1(term1), b@2(term2)]
+			withLog(Entry{Cmd: Command{Key: "a"}, Term: 1}, Entry{Cmd: Command{Key: "b"}, Term: 2})) // log: [dummy@0, a@1(term1), b@2(term2)]
 		// self (id 3) + peer 2 is already 2 of 3 = majority, but entry at
 		// index 2 is from term 2, not the leader's current term 3.
 		c.Step(Message{Type: MsgAppendResponse, FromId: 2, Term: 3, Success: true, LastLogIndex: 2})

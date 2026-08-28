@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"bytes"
 	"fmt"
 	"math/rand"
 	"testing"
@@ -32,7 +33,7 @@ func TestClusterWithChaosElectsLeaderAndReplicatesProposedCommands(t *testing.T)
 
 	cluster.nodes[leaderId].Step(raft.Message{
 		Type:       raft.MsgProposeRequest,
-		ProposeCmd: []any{"a", "b", "c"},
+		ProposeCmd: []raft.Command{{Key: "a"}, {Key: "b"}, {Key: "c"}},
 	})
 
 	if err := cluster.Run(300); err != nil {
@@ -108,7 +109,7 @@ func TestClusterPartitionAndHeal(t *testing.T) {
 	// it can never commit these — they must be discarded once it rejoins.
 	cluster.nodes[oldLeaderId].Step(raft.Message{
 		Type:       raft.MsgProposeRequest,
-		ProposeCmd: []any{"stranded-1", "stranded-2"},
+		ProposeCmd: []raft.Command{{Key: "stranded-1"}, {Key: "stranded-2"}},
 	})
 
 	if err := cluster.Run(300); err != nil {
@@ -133,7 +134,7 @@ func TestClusterPartitionAndHeal(t *testing.T) {
 
 	cluster.nodes[newLeaderId].Step(raft.Message{
 		Type:       raft.MsgProposeRequest,
-		ProposeCmd: []any{"m1", "m2", "m3"},
+		ProposeCmd: []raft.Command{{Key: "m1"}, {Key: "m2"}, {Key: "m3"}},
 	})
 
 	if err := cluster.Run(100); err != nil {
@@ -164,7 +165,7 @@ func TestClusterPartitionAndHeal(t *testing.T) {
 				seed, id, newLeaderId, id, status.Log, newLeaderId, finalLeaderStatus.Log)
 		}
 		for _, entry := range status.Log {
-			if entry.Cmd == "stranded-1" || entry.Cmd == "stranded-2" {
+			if entry.Cmd == (raft.Command{Key: "stranded-1"}) || entry.Cmd == (raft.Command{Key: "stranded-2"}) {
 				t.Fatalf("seed=%d: node %d retained a stranded, never-committed entry after repair: %v", seed, id, status.Log)
 			}
 		}
@@ -201,7 +202,7 @@ func TestClusterRestartRecoversPersistedState(t *testing.T) {
 
 	cluster.nodes[leaderId].Step(raft.Message{
 		Type:       raft.MsgProposeRequest,
-		ProposeCmd: []any{"a", "b", "c"},
+		ProposeCmd: []raft.Command{{Key: "a"}, {Key: "b"}, {Key: "c"}},
 	})
 	if err := cluster.Run(50); err != nil {
 		t.Fatalf("seed=%d: safety violation while replicating: %v", seed, err)
@@ -248,7 +249,7 @@ func TestClusterRestartRecoversPersistedState(t *testing.T) {
 	// post-restart rather than just quiescent.
 	cluster.nodes[finalLeaderId].Step(raft.Message{
 		Type:       raft.MsgProposeRequest,
-		ProposeCmd: []any{"d", "e"},
+		ProposeCmd: []raft.Command{{Key: "d"}, {Key: "e"}},
 	})
 	if err := cluster.Run(300); err != nil {
 		t.Fatalf("seed=%d: safety violation while replicating after restart: %v", seed, err)
@@ -308,7 +309,7 @@ func TestClusterRestartRecoversFromSnapshot(t *testing.T) {
 
 	cluster.nodes[leaderId].Step(raft.Message{
 		Type:       raft.MsgProposeRequest,
-		ProposeCmd: []any{"a", "b", "c"},
+		ProposeCmd: []raft.Command{{Key: "a"}, {Key: "b"}, {Key: "c"}},
 	})
 	if err := cluster.Run(50); err != nil {
 		t.Fatalf("seed=%d: safety violation while replicating: %v", seed, err)
@@ -322,7 +323,8 @@ func TestClusterRestartRecoversFromSnapshot(t *testing.T) {
 	// Simulate the driver having applied entries 1-2 to a state machine and
 	// compacting them away.
 	termAt2 := beforeStatus.Log[2].Term
-	cluster.nodes[leaderId].CompactLog(2, termAt2, "kv-snapshot-at-2")
+	snap := cluster.stateMachines[leaderId].Snapshot()
+	cluster.nodes[leaderId].CompactLog(2, termAt2, snap)
 
 	// Give the driver loop a chance to see SnapshotIndex on Ready() and
 	// persist it via Storage.PersistSnapshot.
@@ -331,9 +333,9 @@ func TestClusterRestartRecoversFromSnapshot(t *testing.T) {
 	}
 
 	snapIndex, snapTerm, snapData := cluster.storages[leaderId].SnapshotState()
-	if snapIndex != 2 || snapTerm != termAt2 || snapData != "kv-snapshot-at-2" {
-		t.Fatalf("seed=%d: storage SnapshotState = %d/%d/%v, want 2/%d/kv-snapshot-at-2",
-			seed, snapIndex, snapTerm, snapData, termAt2)
+	if snapIndex != 2 || snapTerm != termAt2 || !bytes.Equal(snapData.([]byte), snap.([]byte)) {
+		t.Fatalf("seed=%d: storage SnapshotState = %d/%d/%v, want 2/%d/%v",
+			seed, snapIndex, snapTerm, snapData, termAt2, snap)
 	}
 
 	cluster.Restart(leaderId)
@@ -342,7 +344,7 @@ func TestClusterRestartRecoversFromSnapshot(t *testing.T) {
 	if restarted.StartIndex != 2 {
 		t.Fatalf("seed=%d: restarted node %d StartIndex = %d, want 2", seed, leaderId, restarted.StartIndex)
 	}
-	if len(restarted.Log) != 2 || restarted.Log[0].Cmd != nil || restarted.Log[1].Cmd != "c" {
+	if len(restarted.Log) != 2 || restarted.Log[0].Cmd != (raft.Command{}) || restarted.Log[1].Cmd != (raft.Command{Key: "c"}) {
 		t.Fatalf("seed=%d: restarted node %d Log = %+v, want [boundary@2, c@3]", seed, leaderId, restarted.Log)
 	}
 
@@ -363,7 +365,7 @@ func TestClusterRestartRecoversFromSnapshot(t *testing.T) {
 	}
 	cluster.nodes[finalLeaderId].Step(raft.Message{
 		Type:       raft.MsgProposeRequest,
-		ProposeCmd: []any{"d", "e"},
+		ProposeCmd: []raft.Command{{Key: "d"}, {Key: "e"}},
 	})
 	if err := cluster.Run(300); err != nil {
 		t.Fatalf("seed=%d: safety violation while replicating after restart: %v", seed, err)
@@ -400,7 +402,7 @@ func TestClusterElectsLeaderAndReplicatesProposedCommands(t *testing.T) {
 
 	cluster.nodes[leaderId].Step(raft.Message{
 		Type:       raft.MsgProposeRequest,
-		ProposeCmd: []any{"a", "b", "c"},
+		ProposeCmd: []raft.Command{{Key: "a"}, {Key: "b"}, {Key: "c"}},
 	})
 
 	if err := cluster.Run(50); err != nil {

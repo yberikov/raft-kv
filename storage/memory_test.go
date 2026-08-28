@@ -13,7 +13,7 @@ import (
 // placeholder rather than slicing past the end of it.
 func TestInMemoryStoragePersistSnapshotBeyondCurrentLog(t *testing.T) {
 	s := NewInMemoryStorage(3)
-	if err := s.AppendEntries([]raft.Entry{{Cmd: "a", Term: 1}}); err != nil {
+	if err := s.AppendEntries([]raft.Entry{{Cmd: raft.Command{Key: "a"}, Term: 1}}); err != nil {
 		t.Fatalf("AppendEntries: %v", err)
 	}
 	// Log only reaches index 1; snapshot at index 5 is entirely beyond it.

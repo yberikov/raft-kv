@@ -141,7 +141,7 @@ func TestFuzzWALCrashRecovery(t *testing.T) {
 				n := 1 + rng.Intn(3)
 				entries := make([]raft.Entry, n)
 				for j := range entries {
-					entries[j] = raft.Entry{Cmd: strconv.Itoa(rng.Intn(1000)), Term: nextTerm}
+					entries[j] = raft.Entry{Cmd: raft.Command{Key: strconv.Itoa(rng.Intn(1000))}, Term: nextTerm}
 				}
 				if err := w.AppendEntries(entries); err != nil {
 					t.Fatalf("seed=%d op=%d: AppendEntries: %v", seed, i, err)

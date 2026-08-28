@@ -24,7 +24,7 @@ type InMemoryStorage struct {
 }
 
 func NewInMemoryStorage(staleness int) *InMemoryStorage {
-	return &InMemoryStorage{log: []raft.Entry{{Cmd: nil, Term: 0}}, staleness: staleness}
+	return &InMemoryStorage{log: []raft.Entry{{Term: 0}}, staleness: staleness}
 }
 
 func (s *InMemoryStorage) PersistState(term uint64, votedFor int) error {

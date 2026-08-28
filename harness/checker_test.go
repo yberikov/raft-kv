@@ -64,7 +64,7 @@ func TestCheckElectionSafety(t *testing.T) {
 }
 
 func TestCheckLogMatching(t *testing.T) {
-	dummy := raft.Entry{Cmd: nil, Term: 0}
+	dummy := raft.Entry{Term: 0}
 
 	tests := []struct {
 		name      string
@@ -74,41 +74,41 @@ func TestCheckLogMatching(t *testing.T) {
 		{
 			name: "identical logs are fine",
 			statuses: []raft.Status{
-				{Id: 1, Log: []raft.Entry{dummy, {Cmd: "a", Term: 1}, {Cmd: "b", Term: 2}}},
-				{Id: 2, Log: []raft.Entry{dummy, {Cmd: "a", Term: 1}, {Cmd: "b", Term: 2}}},
+				{Id: 1, Log: []raft.Entry{dummy, {Cmd: raft.Command{Key: "a"}, Term: 1}, {Cmd: raft.Command{Key: "b"}, Term: 2}}},
+				{Id: 2, Log: []raft.Entry{dummy, {Cmd: raft.Command{Key: "a"}, Term: 1}, {Cmd: raft.Command{Key: "b"}, Term: 2}}},
 			},
 			wantError: false,
 		},
 		{
 			name: "a shorter log that matches the common prefix is fine (still catching up)",
 			statuses: []raft.Status{
-				{Id: 1, Log: []raft.Entry{dummy, {Cmd: "a", Term: 1}, {Cmd: "b", Term: 2}}},
-				{Id: 2, Log: []raft.Entry{dummy, {Cmd: "a", Term: 1}}},
+				{Id: 1, Log: []raft.Entry{dummy, {Cmd: raft.Command{Key: "a"}, Term: 1}, {Cmd: raft.Command{Key: "b"}, Term: 2}}},
+				{Id: 2, Log: []raft.Entry{dummy, {Cmd: raft.Command{Key: "a"}, Term: 1}}},
 			},
 			wantError: false,
 		},
 		{
 			name: "a diverged tail from an older term is fine — it's normal pre-repair state, not a violation",
 			statuses: []raft.Status{
-				{Id: 1, Log: []raft.Entry{dummy, {Cmd: "a", Term: 5}, {Cmd: "b", Term: 5}}},
-				{Id: 2, Log: []raft.Entry{dummy, {Cmd: "x", Term: 3}, {Cmd: "y", Term: 3}, {Cmd: "z", Term: 4}}},
+				{Id: 1, Log: []raft.Entry{dummy, {Cmd: raft.Command{Key: "a"}, Term: 5}, {Cmd: raft.Command{Key: "b"}, Term: 5}}},
+				{Id: 2, Log: []raft.Entry{dummy, {Cmd: raft.Command{Key: "x"}, Term: 3}, {Cmd: raft.Command{Key: "y"}, Term: 3}, {Cmd: raft.Command{Key: "z"}, Term: 4}}},
 			},
 			wantError: false,
 		},
 		{
 			name: "same index and term but different command is a violation",
 			statuses: []raft.Status{
-				{Id: 1, Log: []raft.Entry{dummy, {Cmd: "a", Term: 1}, {Cmd: "b", Term: 2}, {Cmd: "c", Term: 2}}},
-				{Id: 2, Log: []raft.Entry{dummy, {Cmd: "a", Term: 1}, {Cmd: "b", Term: 2}, {Cmd: "X", Term: 2}}},
+				{Id: 1, Log: []raft.Entry{dummy, {Cmd: raft.Command{Key: "a"}, Term: 1}, {Cmd: raft.Command{Key: "b"}, Term: 2}, {Cmd: raft.Command{Key: "c"}, Term: 2}}},
+				{Id: 2, Log: []raft.Entry{dummy, {Cmd: raft.Command{Key: "a"}, Term: 1}, {Cmd: raft.Command{Key: "b"}, Term: 2}, {Cmd: raft.Command{Key: "X"}, Term: 2}}},
 			},
 			wantError: true,
 		},
 		{
 			name: "violation surfaces across a three-node cluster even when only one pair disagrees",
 			statuses: []raft.Status{
-				{Id: 1, Log: []raft.Entry{dummy, {Cmd: "a", Term: 1}}},
-				{Id: 2, Log: []raft.Entry{dummy, {Cmd: "a", Term: 1}}},
-				{Id: 3, Log: []raft.Entry{dummy, {Cmd: "X", Term: 1}}},
+				{Id: 1, Log: []raft.Entry{dummy, {Cmd: raft.Command{Key: "a"}, Term: 1}}},
+				{Id: 2, Log: []raft.Entry{dummy, {Cmd: raft.Command{Key: "a"}, Term: 1}}},
+				{Id: 3, Log: []raft.Entry{dummy, {Cmd: raft.Command{Key: "X"}, Term: 1}}},
 			},
 			wantError: true,
 		},
@@ -128,7 +128,7 @@ func TestCheckLogMatching(t *testing.T) {
 }
 
 func TestCommittedLogMerge(t *testing.T) {
-	dummy := raft.Entry{Cmd: nil, Term: 0}
+	dummy := raft.Entry{Term: 0}
 
 	tests := []struct {
 		name      string
@@ -138,32 +138,32 @@ func TestCommittedLogMerge(t *testing.T) {
 		{
 			name: "agreeing committed entries across nodes are fine",
 			statuses: []raft.Status{
-				{Id: 1, CommitIndex: 2, Log: []raft.Entry{dummy, {Cmd: "a", Term: 1}, {Cmd: "b", Term: 2}}},
-				{Id: 2, CommitIndex: 2, Log: []raft.Entry{dummy, {Cmd: "a", Term: 1}, {Cmd: "b", Term: 2}}},
+				{Id: 1, CommitIndex: 2, Log: []raft.Entry{dummy, {Cmd: raft.Command{Key: "a"}, Term: 1}, {Cmd: raft.Command{Key: "b"}, Term: 2}}},
+				{Id: 2, CommitIndex: 2, Log: []raft.Entry{dummy, {Cmd: raft.Command{Key: "a"}, Term: 1}, {Cmd: raft.Command{Key: "b"}, Term: 2}}},
 			},
 			wantError: false,
 		},
 		{
 			name: "two nodes committing different commands at the same index is a violation",
 			statuses: []raft.Status{
-				{Id: 1, CommitIndex: 1, Log: []raft.Entry{dummy, {Cmd: "a", Term: 1}}},
-				{Id: 2, CommitIndex: 1, Log: []raft.Entry{dummy, {Cmd: "X", Term: 1}}},
+				{Id: 1, CommitIndex: 1, Log: []raft.Entry{dummy, {Cmd: raft.Command{Key: "a"}, Term: 1}}},
+				{Id: 2, CommitIndex: 1, Log: []raft.Entry{dummy, {Cmd: raft.Command{Key: "X"}, Term: 1}}},
 			},
 			wantError: true,
 		},
 		{
 			name: "a mismatch past CommitIndex is ignored — uncommitted tail can disagree",
 			statuses: []raft.Status{
-				{Id: 1, CommitIndex: 0, Log: []raft.Entry{dummy, {Cmd: "a", Term: 1}}},
-				{Id: 2, CommitIndex: 0, Log: []raft.Entry{dummy, {Cmd: "X", Term: 1}}},
+				{Id: 1, CommitIndex: 0, Log: []raft.Entry{dummy, {Cmd: raft.Command{Key: "a"}, Term: 1}}},
+				{Id: 2, CommitIndex: 0, Log: []raft.Entry{dummy, {Cmd: raft.Command{Key: "X"}, Term: 1}}},
 			},
 			wantError: false,
 		},
 		{
 			name: "the commitIndex entry itself is included, not just the entries before it",
 			statuses: []raft.Status{
-				{Id: 1, CommitIndex: 1, Log: []raft.Entry{dummy, {Cmd: "a", Term: 1}}},
-				{Id: 2, CommitIndex: 1, Log: []raft.Entry{dummy, {Cmd: "X", Term: 1}}},
+				{Id: 1, CommitIndex: 1, Log: []raft.Entry{dummy, {Cmd: raft.Command{Key: "a"}, Term: 1}}},
+				{Id: 2, CommitIndex: 1, Log: []raft.Entry{dummy, {Cmd: raft.Command{Key: "X"}, Term: 1}}},
 			},
 			wantError: true,
 		},
@@ -184,11 +184,11 @@ func TestCommittedLogMerge(t *testing.T) {
 }
 
 func TestCheckLeaderCompleteness(t *testing.T) {
-	dummy := raft.Entry{Cmd: nil, Term: 0}
+	dummy := raft.Entry{Term: 0}
 	canonical := map[int]raft.Entry{
 		0: dummy,
-		1: {Cmd: "a", Term: 1},
-		5: {Cmd: "z", Term: 3},
+		1: {Cmd: raft.Command{Key: "a"}, Term: 1},
+		5: {Cmd: raft.Command{Key: "z"}, Term: 3},
 	}
 
 	tests := []struct {
@@ -206,36 +206,36 @@ func TestCheckLeaderCompleteness(t *testing.T) {
 		{
 			name: "a leader missing a committed entry entirely is a violation",
 			statuses: []raft.Status{
-				{Id: 1, State: raft.LeaderState, Term: 3, Log: []raft.Entry{dummy, {Cmd: "a", Term: 1}}},
+				{Id: 1, State: raft.LeaderState, Term: 3, Log: []raft.Entry{dummy, {Cmd: raft.Command{Key: "a"}, Term: 1}}},
 			},
 			wantError: true,
 		},
 		{
 			name: "a leader with a conflicting entry at a committed index is a violation",
 			statuses: []raft.Status{
-				{Id: 1, State: raft.LeaderState, Term: 3, Log: []raft.Entry{dummy, {Cmd: "X", Term: 1}, {}, {}, {}, {Cmd: "z", Term: 3}}},
+				{Id: 1, State: raft.LeaderState, Term: 3, Log: []raft.Entry{dummy, {Cmd: raft.Command{Key: "X"}, Term: 1}, {}, {}, {}, {Cmd: raft.Command{Key: "z"}, Term: 3}}},
 			},
 			wantError: true,
 		},
 		{
 			name: "a leader holding every committed entry is fine",
 			statuses: []raft.Status{
-				{Id: 1, State: raft.LeaderState, Term: 3, Log: []raft.Entry{dummy, {Cmd: "a", Term: 1}, {}, {}, {}, {Cmd: "z", Term: 3}}},
+				{Id: 1, State: raft.LeaderState, Term: 3, Log: []raft.Entry{dummy, {Cmd: raft.Command{Key: "a"}, Term: 1}, {}, {}, {}, {Cmd: raft.Command{Key: "z"}, Term: 3}}},
 			},
 			wantError: false,
 		},
 		{
 			name: "every coexisting leader gets checked, not just one",
 			statuses: []raft.Status{
-				{Id: 1, State: raft.LeaderState, Term: 3, Log: []raft.Entry{dummy, {Cmd: "a", Term: 1}, {}, {}, {}, {Cmd: "z", Term: 3}}},
-				{Id: 2, State: raft.LeaderState, Term: 3, Log: []raft.Entry{dummy, {Cmd: "a", Term: 1}}},
+				{Id: 1, State: raft.LeaderState, Term: 3, Log: []raft.Entry{dummy, {Cmd: raft.Command{Key: "a"}, Term: 1}, {}, {}, {}, {Cmd: raft.Command{Key: "z"}, Term: 3}}},
+				{Id: 2, State: raft.LeaderState, Term: 3, Log: []raft.Entry{dummy, {Cmd: raft.Command{Key: "a"}, Term: 1}}},
 			},
 			wantError: true,
 		},
 		{
 			name: "a stale leader from a lower term than a committed entry is not held to that entry",
 			statuses: []raft.Status{
-				{Id: 1, State: raft.LeaderState, Term: 1, Log: []raft.Entry{dummy, {Cmd: "a", Term: 1}}},
+				{Id: 1, State: raft.LeaderState, Term: 1, Log: []raft.Entry{dummy, {Cmd: raft.Command{Key: "a"}, Term: 1}}},
 			},
 			wantError: false,
 		},

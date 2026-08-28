@@ -35,22 +35,40 @@ type Core struct {
 	persistedIndex      int
 	truncatedFrom       int
 	persistedStartIndex int
+
+	appliedIndex int
 }
 
 type (
 	Entry struct {
-		Cmd  any
+		Cmd  Command
 		Term uint64
 	}
 
+	Command struct {
+		Op       OpType
+		Key      string
+		Value    string
+		Expected string
+		ClientID string
+		Seq      uint64
+	}
+
+	OpType    string
 	stateType string
 	MsgType   string
 )
 
-var (
+const (
 	FollowerState  stateType = "follower"
 	LeaderState    stateType = "leader"
 	CandidateState stateType = "candidate"
+)
+
+const (
+	OpPut OpType = "put"
+	OpDel OpType = "del"
+	OpCas OpType = "cas"
 )
 
 func NewCore(id int, peers []int, minElectionTicks, maxElectionTicks int, rng *rand.Rand, replicatePeriod int) *Core {
@@ -71,7 +89,7 @@ func NewCore(id int, peers []int, minElectionTicks, maxElectionTicks int, rng *r
 		matchIndex:       map[int]int{},
 	}
 	c.resetElectionTimer()
-	c.log = append(c.log, Entry{Cmd: nil, Term: 0})
+	c.log = append(c.log, Entry{Cmd: Command{}, Term: 0})
 	c.persistedTerm = c.currentTerm
 	c.persistedVotedFor = c.votedFor
 	return c
@@ -80,6 +98,7 @@ func NewCore(id int, peers []int, minElectionTicks, maxElectionTicks int, rng *r
 func (c *Core) Restore(term uint64, votedFor int, log []Entry, startIndex int, startTerm uint64, snapshotData any) {
 	c.currentTerm = term
 	c.votedFor = votedFor
+	c.appliedIndex = startIndex
 	c.log = log
 	c.startIndex = startIndex
 	c.startTerm = startTerm
@@ -92,12 +111,13 @@ func (c *Core) Restore(term uint64, votedFor int, log []Entry, startIndex int, s
 
 func (c *Core) Status() Status {
 	return Status{
-		Id:          c.id,
-		Term:        c.currentTerm,
-		State:       c.state,
-		CommitIndex: c.commitIndex,
-		Log:         append([]Entry(nil), c.log...),
-		StartIndex:  c.startIndex,
+		Id:           c.id,
+		Term:         c.currentTerm,
+		State:        c.state,
+		CommitIndex:  c.commitIndex,
+		Log:          append([]Entry(nil), c.log...),
+		StartIndex:   c.startIndex,
+		AppliedIndex: c.appliedIndex,
 	}
 }
 
@@ -205,6 +225,17 @@ func (c *Core) Ready() ReadyState {
 		c.persistedIndex = last
 	}
 
+	if c.appliedIndex < c.startIndex {
+		c.appliedIndex = c.startIndex
+	}
+
+	if c.commitIndex > c.appliedIndex {
+		lo := c.appliedIndex + 1 - c.startIndex
+		hi := c.commitIndex + 1 - c.startIndex
+		ready.EntriesToApply = append([]Entry(nil), c.log[lo:hi]...)
+		c.appliedIndex = c.commitIndex
+	}
+
 	return ready
 }
 
@@ -214,6 +245,7 @@ type ReadyState struct {
 	Term             uint64
 	VotedFor         int
 	EntriesToPersist []Entry
+	EntriesToApply   []Entry
 	TruncateFrom     int
 
 	// SnapshotIndex is nonzero exactly when a snapshot boundary has advanced
@@ -355,7 +387,7 @@ func (c *Core) handleAppendEntriesResponse(m Message) {
 		return
 	}
 
-	if m.Term != c.currentTerm {
+	if c.state != LeaderState || m.Term != c.currentTerm {
 		return
 	}
 
@@ -483,7 +515,7 @@ func (c *Core) handleInstallSnapshotResponse(m Message) {
 		c.becomeFollower(m.Term)
 		return
 	}
-	if m.Term != c.currentTerm {
+	if c.state != LeaderState || m.Term != c.currentTerm {
 		return
 	}
 	c.nextIndex[m.FromId] = m.LastLogIndex + 1

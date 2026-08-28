@@ -150,7 +150,7 @@ func newWAL(dir string, n int, m time.Duration, segmentMaxBytes int64) (*WAL, er
 
 	w := &WAL{
 		segments: segs,
-		log:      []raft.Entry{{Cmd: nil, Term: 0}},
+		log:      []raft.Entry{{Term: 0}},
 		n:        n,
 		m:        m,
 		stop:     make(chan struct{}),

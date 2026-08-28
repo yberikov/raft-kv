@@ -13,7 +13,7 @@ type Message struct {
 	Entries     []Entry
 	CommitIndex int
 
-	ProposeCmd []any
+	ProposeCmd []Command
 
 	SnapshotIndex int
 	SnapshotTerm  uint64

@@ -40,7 +40,7 @@ func TestWALAppendEntriesSurvivesReopen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewWAL: %v", err)
 	}
-	entries := []raft.Entry{{Cmd: "a", Term: 1}, {Cmd: "b", Term: 1}}
+	entries := []raft.Entry{{Cmd: raft.Command{Key: "a"}, Term: 1}, {Cmd: raft.Command{Key: "b"}, Term: 1}}
 	if err := w.AppendEntries(entries); err != nil {
 		t.Fatalf("AppendEntries: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestWALAppendEntriesSurvivesReopen(t *testing.T) {
 		t.Fatalf("LastIndex: got %d, want 2", got)
 	}
 	got := reopened.Entries(1, 3)
-	if len(got) != 2 || got[0].Cmd != "a" || got[1].Cmd != "b" {
+	if len(got) != 2 || got[0].Cmd != (raft.Command{Key: "a"}) || got[1].Cmd != (raft.Command{Key: "b"}) {
 		t.Fatalf("Entries: got %+v", got)
 	}
 	// Close() closes without an explicit sync, but the file was written and
@@ -81,13 +81,13 @@ func TestWALInlineSyncAtNThreshold(t *testing.T) {
 	}
 	defer w.Close()
 
-	if err := w.AppendEntries([]raft.Entry{{Cmd: "a", Term: 1}}); err != nil {
+	if err := w.AppendEntries([]raft.Entry{{Cmd: raft.Command{Key: "a"}, Term: 1}}); err != nil {
 		t.Fatalf("AppendEntries: %v", err)
 	}
 	if got := w.LastFsyncedIndex(); got != 0 {
 		t.Fatalf("after 1st append: got %d, want 0", got)
 	}
-	if err := w.AppendEntries([]raft.Entry{{Cmd: "b", Term: 1}}); err != nil {
+	if err := w.AppendEntries([]raft.Entry{{Cmd: raft.Command{Key: "b"}, Term: 1}}); err != nil {
 		t.Fatalf("AppendEntries: %v", err)
 	}
 	if got := w.LastFsyncedIndex(); got != 2 {
@@ -103,7 +103,7 @@ func TestWALBackgroundSyncAtMDeadline(t *testing.T) {
 	}
 	defer w.Close()
 
-	if err := w.AppendEntries([]raft.Entry{{Cmd: "a", Term: 1}}); err != nil {
+	if err := w.AppendEntries([]raft.Entry{{Cmd: raft.Command{Key: "a"}, Term: 1}}); err != nil {
 		t.Fatalf("AppendEntries: %v", err)
 	}
 	if got := w.LastFsyncedIndex(); got != 0 {
@@ -126,13 +126,13 @@ func TestWALTruncateFromSurvivesReopen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewWAL: %v", err)
 	}
-	if err := w.AppendEntries([]raft.Entry{{Cmd: "a", Term: 1}, {Cmd: "b", Term: 1}, {Cmd: "c", Term: 1}}); err != nil {
+	if err := w.AppendEntries([]raft.Entry{{Cmd: raft.Command{Key: "a"}, Term: 1}, {Cmd: raft.Command{Key: "b"}, Term: 1}, {Cmd: raft.Command{Key: "c"}, Term: 1}}); err != nil {
 		t.Fatalf("AppendEntries: %v", err)
 	}
 	if err := w.TruncateFrom(2); err != nil {
 		t.Fatalf("TruncateFrom: %v", err)
 	}
-	if err := w.AppendEntries([]raft.Entry{{Cmd: "b2", Term: 2}}); err != nil {
+	if err := w.AppendEntries([]raft.Entry{{Cmd: raft.Command{Key: "b2"}, Term: 2}}); err != nil {
 		t.Fatalf("AppendEntries: %v", err)
 	}
 	if err := w.Close(); err != nil {
@@ -149,7 +149,7 @@ func TestWALTruncateFromSurvivesReopen(t *testing.T) {
 		t.Fatalf("LastIndex: got %d, want 2", got)
 	}
 	got := reopened.Entries(1, 3)
-	if len(got) != 2 || got[0].Cmd != "a" || got[1].Cmd != "b2" {
+	if len(got) != 2 || got[0].Cmd != (raft.Command{Key: "a"}) || got[1].Cmd != (raft.Command{Key: "b2"}) {
 		t.Fatalf("Entries after truncate+reappend replay: got %+v", got)
 	}
 }
@@ -160,7 +160,7 @@ func TestWALPersistSnapshotSurvivesReopen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewWAL: %v", err)
 	}
-	if err := w.AppendEntries([]raft.Entry{{Cmd: "a", Term: 1}, {Cmd: "b", Term: 1}, {Cmd: "c", Term: 1}}); err != nil {
+	if err := w.AppendEntries([]raft.Entry{{Cmd: raft.Command{Key: "a"}, Term: 1}, {Cmd: raft.Command{Key: "b"}, Term: 1}, {Cmd: raft.Command{Key: "c"}, Term: 1}}); err != nil {
 		t.Fatalf("AppendEntries: %v", err)
 	}
 	// Not yet synced (n=100, m=1h) — PersistSnapshot must still fsync
@@ -173,7 +173,7 @@ func TestWALPersistSnapshotSurvivesReopen(t *testing.T) {
 	if got := w.LastFsyncedIndex(); got != 3 {
 		t.Fatalf("LastFsyncedIndex right after PersistSnapshot: got %d, want 3 (immediate sync)", got)
 	}
-	if err := w.AppendEntries([]raft.Entry{{Cmd: "d", Term: 1}}); err != nil {
+	if err := w.AppendEntries([]raft.Entry{{Cmd: raft.Command{Key: "d"}, Term: 1}}); err != nil {
 		t.Fatalf("AppendEntries: %v", err)
 	}
 	if err := w.Close(); err != nil {
@@ -194,7 +194,7 @@ func TestWALPersistSnapshotSurvivesReopen(t *testing.T) {
 		t.Fatalf("LastIndex: got %d, want 4", got)
 	}
 	got := reopened.Entries(3, 5)
-	if len(got) != 2 || got[0].Cmd != nil || got[1].Cmd != "d" {
+	if len(got) != 2 || got[0].Cmd != (raft.Command{}) || got[1].Cmd != (raft.Command{Key: "d"}) {
 		t.Fatalf("Entries after snapshot replay: got %+v, want [boundary@3, d@4]", got)
 	}
 	if gotTerm := reopened.TermAt(3); gotTerm != 1 {
@@ -214,7 +214,7 @@ func TestWALPersistSnapshotBeyondCurrentLog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewWAL: %v", err)
 	}
-	if err := w.AppendEntries([]raft.Entry{{Cmd: "a", Term: 1}}); err != nil {
+	if err := w.AppendEntries([]raft.Entry{{Cmd: raft.Command{Key: "a"}, Term: 1}}); err != nil {
 		t.Fatalf("AppendEntries: %v", err)
 	}
 	// Snapshot at index 5 is entirely beyond the 1-entry log we hold.
@@ -260,7 +260,7 @@ func TestWALPoisonsAfterSyncError(t *testing.T) {
 		t.Fatalf("closing active file for the test: %v", err)
 	}
 
-	err = w.AppendEntries([]raft.Entry{{Cmd: "a", Term: 1}})
+	err = w.AppendEntries([]raft.Entry{{Cmd: raft.Command{Key: "a"}, Term: 1}})
 	if err == nil {
 		t.Fatalf("expected AppendEntries to surface the sync error, got nil")
 	}
@@ -287,19 +287,19 @@ func TestWALReclaimSegmentsDeletesFilesBeforeSnapshot(t *testing.T) {
 	if err := w.PersistState(1, 0); err != nil { // segment 1
 		t.Fatalf("PersistState: %v", err)
 	}
-	if err := w.AppendEntries([]raft.Entry{{Cmd: "a", Term: 1}}); err != nil { // segment 2
+	if err := w.AppendEntries([]raft.Entry{{Cmd: raft.Command{Key: "a"}, Term: 1}}); err != nil { // segment 2
 		t.Fatalf("AppendEntries a: %v", err)
 	}
-	if err := w.AppendEntries([]raft.Entry{{Cmd: "b", Term: 1}}); err != nil { // segment 3
+	if err := w.AppendEntries([]raft.Entry{{Cmd: raft.Command{Key: "b"}, Term: 1}}); err != nil { // segment 3
 		t.Fatalf("AppendEntries b: %v", err)
 	}
-	if err := w.AppendEntries([]raft.Entry{{Cmd: "c", Term: 1}}); err != nil { // segment 4
+	if err := w.AppendEntries([]raft.Entry{{Cmd: raft.Command{Key: "c"}, Term: 1}}); err != nil { // segment 4
 		t.Fatalf("AppendEntries c: %v", err)
 	}
 	if err := w.PersistSnapshot(2, 1, "snap-at-2"); err != nil { // segments 5 (boundary) + 6 (survivor "c")
 		t.Fatalf("PersistSnapshot: %v", err)
 	}
-	if err := w.AppendEntries([]raft.Entry{{Cmd: "d", Term: 1}}); err != nil { // segment 7
+	if err := w.AppendEntries([]raft.Entry{{Cmd: raft.Command{Key: "d"}, Term: 1}}); err != nil { // segment 7
 		t.Fatalf("AppendEntries d: %v", err)
 	}
 
@@ -347,7 +347,7 @@ func TestWALReclaimSegmentsDeletesFilesBeforeSnapshot(t *testing.T) {
 		t.Fatalf("LastIndex after reclaim+reopen: got %d, want 4", got)
 	}
 	got := reopened.Entries(2, 5)
-	if len(got) != 3 || got[0].Cmd != nil || got[1].Cmd != "c" || got[2].Cmd != "d" {
+	if len(got) != 3 || got[0].Cmd != (raft.Command{}) || got[1].Cmd != (raft.Command{Key: "c"}) || got[2].Cmd != (raft.Command{Key: "d"}) {
 		t.Fatalf("Entries after reclaim+reopen: got %+v, want [boundary@2, c@3, d@4]", got)
 	}
 }
@@ -360,7 +360,7 @@ func TestWALReclaimSegmentsNoopBeforeAnySnapshot(t *testing.T) {
 	}
 	defer w.Close()
 
-	if err := w.AppendEntries([]raft.Entry{{Cmd: "a", Term: 1}}); err != nil {
+	if err := w.AppendEntries([]raft.Entry{{Cmd: raft.Command{Key: "a"}, Term: 1}}); err != nil {
 		t.Fatalf("AppendEntries: %v", err)
 	}
 
@@ -392,7 +392,7 @@ func TestWALReclaimSegmentsIsIdempotent(t *testing.T) {
 	}
 	defer w.Close()
 
-	if err := w.AppendEntries([]raft.Entry{{Cmd: "a", Term: 1}}); err != nil {
+	if err := w.AppendEntries([]raft.Entry{{Cmd: raft.Command{Key: "a"}, Term: 1}}); err != nil {
 		t.Fatalf("AppendEntries: %v", err)
 	}
 	if err := w.PersistSnapshot(1, 1, "snap-at-1"); err != nil {

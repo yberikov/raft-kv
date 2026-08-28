@@ -3,18 +3,20 @@ package harness
 import (
 	"fmt"
 	"math/rand"
+	"raft-kv/kv"
 	"raft-kv/raft"
 	"raft-kv/storage"
 )
 
 type Cluster struct {
-	ids          []int
-	nodes        map[int]*raft.Core
-	network      *Network
-	storages     map[int]storage.Storage
-	outbox       map[int][]pendingBatch
-	committedLog CommittedLog
-	debugBuff    RingBuffer
+	ids           []int
+	nodes         map[int]*raft.Core
+	network       *Network
+	storages      map[int]storage.Storage
+	outbox        map[int][]pendingBatch
+	stateMachines map[int]*kv.StateMachine
+	committedLog  CommittedLog
+	debugBuff     RingBuffer
 
 	CompactThreshold int
 }
@@ -26,18 +28,20 @@ type pendingBatch struct {
 
 func NewCluster(ids []int, seed int64, rng *rand.Rand, chaosConfig ChaosConfig) Cluster {
 	cluster := Cluster{
-		ids:          ids,
-		network:      NewNetwork(seed, rng, chaosConfig),
-		storages:     make(map[int]storage.Storage),
-		outbox:       make(map[int][]pendingBatch),
-		committedLog: NewCommittedLog(),
-		nodes:        make(map[int]*raft.Core),
-		debugBuff:    NewRingBuffer(50),
+		ids:           ids,
+		network:       NewNetwork(seed, rng, chaosConfig),
+		storages:      make(map[int]storage.Storage),
+		outbox:        make(map[int][]pendingBatch),
+		committedLog:  NewCommittedLog(),
+		nodes:         make(map[int]*raft.Core),
+		debugBuff:     NewRingBuffer(50),
+		stateMachines: make(map[int]*kv.StateMachine),
 	}
 
 	for _, id := range ids {
 		cluster.nodes[id] = raft.NewCore(id, ids, 10, 20, rng, 3)
 		cluster.storages[id] = storage.NewInMemoryStorage(3)
+		cluster.stateMachines[id] = kv.NewStateMachine()
 	}
 	return cluster
 }
@@ -52,6 +56,7 @@ func (c *Cluster) Restart(id int) {
 	node.Restore(term, votedFor, log, snapIndex, snapTerm, snapData)
 	c.nodes[id] = node
 	c.outbox[id] = nil
+	c.stateMachines[id] = kv.NewStateMachine()
 }
 
 func (c *Cluster) Crash(id int) {
@@ -77,6 +82,7 @@ func (c *Cluster) Run(tick int) error {
 			if ready.SnapshotIndex != 0 {
 				c.storages[id].PersistSnapshot(ready.SnapshotIndex, ready.SnapshotTerm, ready.SnapshotData)
 				c.storages[id].ReclaimSegments()
+				c.stateMachines[id].Restore(ready.SnapshotData)
 			}
 			if len(ready.EntriesToPersist) > 0 {
 				c.storages[id].AppendEntries(ready.EntriesToPersist)
@@ -87,6 +93,10 @@ func (c *Cluster) Run(tick int) error {
 					requiredIndex = c.storages[id].LastIndex()
 				}
 				c.outbox[id] = append(c.outbox[id], pendingBatch{requiredIndex: requiredIndex, messages: ready.Messages})
+			}
+
+			if len(ready.EntriesToApply) > 0 {
+				c.stateMachines[id].Apply(ready.EntriesToApply)
 			}
 
 			durable := c.storages[id].LastFsyncedIndex()
@@ -100,7 +110,7 @@ func (c *Cluster) Run(tick int) error {
 				if status.CommitIndex-status.StartIndex >= c.CompactThreshold {
 					idx := status.CommitIndex
 					term := status.Log[idx-status.StartIndex].Term
-					node.CompactLog(idx, term, fmt.Sprintf("snapshot@%d", idx))
+					node.CompactLog(idx, term, c.stateMachines[id].Snapshot())
 				}
 			}
 		}
