@@ -16,6 +16,9 @@ func TestReadySurfacesEntriesToApplyUpToCommitIndex(t *testing.T) {
 	if len(ready.EntriesToApply) != 2 || ready.EntriesToApply[0].Cmd != (Command{Key: "a"}) || ready.EntriesToApply[1].Cmd != (Command{Key: "b"}) {
 		t.Fatalf("EntriesToApply = %+v, want [a b]", ready.EntriesToApply)
 	}
+	if ready.ApplyFrom != 1 {
+		t.Fatalf("ApplyFrom = %d, want 1", ready.ApplyFrom)
+	}
 
 	// A second Ready() with no further commit advance must not re-report
 	// already-applied entries.
@@ -41,6 +44,9 @@ func TestReadyOnlyReportsNewlyCommittedEntries(t *testing.T) {
 	if len(ready.EntriesToApply) != 2 || ready.EntriesToApply[0].Cmd != (Command{Key: "b"}) || ready.EntriesToApply[1].Cmd != (Command{Key: "c"}) {
 		t.Fatalf("EntriesToApply = %+v, want [b c]", ready.EntriesToApply)
 	}
+	if ready.ApplyFrom != 2 {
+		t.Fatalf("ApplyFrom = %d, want 2 -- it must track the batch, not restart at the log head", ready.ApplyFrom)
+	}
 }
 
 // TestReadyClampsAppliedIndexAfterInstallSnapshot is the critical safety case
@@ -65,6 +71,12 @@ func TestReadyClampsAppliedIndexAfterInstallSnapshot(t *testing.T) {
 	if len(ready.EntriesToApply) != 1 || ready.EntriesToApply[0].Cmd != (Command{Key: "f"}) {
 		t.Fatalf("EntriesToApply = %+v, want [f] -- indices covered by the snapshot must not be replayed individually", ready.EntriesToApply)
 	}
+	// ApplyFrom must be computed after the clamp, or the driver is handed an
+	// index that the snapshot already covers -- off by exactly the amount the
+	// log was compacted.
+	if ready.ApplyFrom != 6 {
+		t.Fatalf("ApplyFrom = %d, want 6", ready.ApplyFrom)
+	}
 }
 
 // TestReadyReportsSnapshotAndApplicableEntriesTogether covers CompactLog and
@@ -88,5 +100,29 @@ func TestReadyReportsSnapshotAndApplicableEntriesTogether(t *testing.T) {
 	}
 	if len(ready.EntriesToApply) != 1 || ready.EntriesToApply[0].Cmd != (Command{Key: "c"}) {
 		t.Fatalf("EntriesToApply = %+v, want [c]", ready.EntriesToApply)
+	}
+	if ready.ApplyFrom != 3 {
+		t.Fatalf("ApplyFrom = %d, want 3", ready.ApplyFrom)
+	}
+}
+
+// TestReadyApplyFromAfterRestoreFromSnapshot covers the restart path: Restore
+// seeds appliedIndex at the snapshot boundary, so the first batch after
+// recovery starts one past it rather than at the head of the (truncated) log.
+func TestReadyApplyFromAfterRestoreFromSnapshot(t *testing.T) {
+	c := newTestCore(t, 1, []int{1, 2, 3})
+	c.Restore(4, 0, []Entry{
+		{Term: 4},                         // index 5, the snapshot boundary
+		{Cmd: Command{Key: "f"}, Term: 4}, // index 6
+		{Cmd: Command{Key: "g"}, Term: 4}, // index 7
+	}, 5, 4, []byte("state-as-of-5"))
+	c.commitIndex = 7
+
+	ready := c.Ready()
+	if len(ready.EntriesToApply) != 2 {
+		t.Fatalf("EntriesToApply = %+v, want [f g]", ready.EntriesToApply)
+	}
+	if ready.ApplyFrom != 6 {
+		t.Fatalf("ApplyFrom = %d, want 6 -- entries folded into the restored snapshot must not be re-applied", ready.ApplyFrom)
 	}
 }

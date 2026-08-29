@@ -31,10 +31,7 @@ func TestClusterWithChaosElectsLeaderAndReplicatesProposedCommands(t *testing.T)
 	}
 	t.Logf("seed=%d: node %d elected leader", seed, leaderId)
 
-	cluster.nodes[leaderId].Step(raft.Message{
-		Type:       raft.MsgProposeRequest,
-		ProposeCmd: []raft.Command{{Key: "a"}, {Key: "b"}, {Key: "c"}},
-	})
+	cluster.nodes[leaderId].Propose([]raft.Command{{Key: "a"}, {Key: "b"}, {Key: "c"}})
 
 	if err := cluster.Run(300); err != nil {
 		t.Fatalf("seed=%d: safety violation while replicating under chaos: %v", seed, err)
@@ -107,10 +104,7 @@ func TestClusterPartitionAndHeal(t *testing.T) {
 
 	// The old leader can still append locally, but with no majority reachable
 	// it can never commit these — they must be discarded once it rejoins.
-	cluster.nodes[oldLeaderId].Step(raft.Message{
-		Type:       raft.MsgProposeRequest,
-		ProposeCmd: []raft.Command{{Key: "stranded-1"}, {Key: "stranded-2"}},
-	})
+	cluster.nodes[oldLeaderId].Propose([]raft.Command{{Key: "stranded-1"}, {Key: "stranded-2"}})
 
 	if err := cluster.Run(300); err != nil {
 		t.Fatalf("seed=%d: safety violation while majority elects a new leader: %v", seed, err)
@@ -132,10 +126,7 @@ func TestClusterPartitionAndHeal(t *testing.T) {
 	}
 	t.Logf("seed=%d: node %d elected new leader in the majority partition", seed, newLeaderId)
 
-	cluster.nodes[newLeaderId].Step(raft.Message{
-		Type:       raft.MsgProposeRequest,
-		ProposeCmd: []raft.Command{{Key: "m1"}, {Key: "m2"}, {Key: "m3"}},
-	})
+	cluster.nodes[newLeaderId].Propose([]raft.Command{{Key: "m1"}, {Key: "m2"}, {Key: "m3"}})
 
 	if err := cluster.Run(100); err != nil {
 		t.Fatalf("seed=%d: safety violation while majority replicates: %v", seed, err)
@@ -200,10 +191,7 @@ func TestClusterRestartRecoversPersistedState(t *testing.T) {
 	}
 	t.Logf("seed=%d: node %d elected leader", seed, leaderId)
 
-	cluster.nodes[leaderId].Step(raft.Message{
-		Type:       raft.MsgProposeRequest,
-		ProposeCmd: []raft.Command{{Key: "a"}, {Key: "b"}, {Key: "c"}},
-	})
+	cluster.nodes[leaderId].Propose([]raft.Command{{Key: "a"}, {Key: "b"}, {Key: "c"}})
 	if err := cluster.Run(50); err != nil {
 		t.Fatalf("seed=%d: safety violation while replicating: %v", seed, err)
 	}
@@ -247,10 +235,7 @@ func TestClusterRestartRecoversPersistedState(t *testing.T) {
 	// already agrees on them under the hood. Propose something new and
 	// require it to commit, which proves the cluster is actually healthy
 	// post-restart rather than just quiescent.
-	cluster.nodes[finalLeaderId].Step(raft.Message{
-		Type:       raft.MsgProposeRequest,
-		ProposeCmd: []raft.Command{{Key: "d"}, {Key: "e"}},
-	})
+	cluster.nodes[finalLeaderId].Propose([]raft.Command{{Key: "d"}, {Key: "e"}})
 	if err := cluster.Run(300); err != nil {
 		t.Fatalf("seed=%d: safety violation while replicating after restart: %v", seed, err)
 	}
@@ -307,10 +292,7 @@ func TestClusterRestartRecoversFromSnapshot(t *testing.T) {
 		t.Fatalf("seed=%d: no leader elected after 300 ticks", seed)
 	}
 
-	cluster.nodes[leaderId].Step(raft.Message{
-		Type:       raft.MsgProposeRequest,
-		ProposeCmd: []raft.Command{{Key: "a"}, {Key: "b"}, {Key: "c"}},
-	})
+	cluster.nodes[leaderId].Propose([]raft.Command{{Key: "a"}, {Key: "b"}, {Key: "c"}})
 	if err := cluster.Run(50); err != nil {
 		t.Fatalf("seed=%d: safety violation while replicating: %v", seed, err)
 	}
@@ -363,10 +345,7 @@ func TestClusterRestartRecoversFromSnapshot(t *testing.T) {
 	if finalLeaderId == 0 {
 		t.Fatalf("seed=%d: no leader present after restart recovery window", seed)
 	}
-	cluster.nodes[finalLeaderId].Step(raft.Message{
-		Type:       raft.MsgProposeRequest,
-		ProposeCmd: []raft.Command{{Key: "d"}, {Key: "e"}},
-	})
+	cluster.nodes[finalLeaderId].Propose([]raft.Command{{Key: "d"}, {Key: "e"}})
 	if err := cluster.Run(300); err != nil {
 		t.Fatalf("seed=%d: safety violation while replicating after restart: %v", seed, err)
 	}
@@ -400,10 +379,7 @@ func TestClusterElectsLeaderAndReplicatesProposedCommands(t *testing.T) {
 	}
 	t.Logf("seed=%d: node %d elected leader", seed, leaderId)
 
-	cluster.nodes[leaderId].Step(raft.Message{
-		Type:       raft.MsgProposeRequest,
-		ProposeCmd: []raft.Command{{Key: "a"}, {Key: "b"}, {Key: "c"}},
-	})
+	cluster.nodes[leaderId].Propose([]raft.Command{{Key: "a"}, {Key: "b"}, {Key: "c"}})
 
 	if err := cluster.Run(50); err != nil {
 		t.Fatalf("seed=%d: safety violation while replicating: %v", seed, err)

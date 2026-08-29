@@ -4,6 +4,7 @@ import "math/rand"
 
 type Core struct {
 	id          int
+	leaderId    int
 	peers       []int
 	currentTerm uint64
 	votedFor    int
@@ -118,6 +119,7 @@ func (c *Core) Status() Status {
 		Log:          append([]Entry(nil), c.log...),
 		StartIndex:   c.startIndex,
 		AppliedIndex: c.appliedIndex,
+		LeaderId:     c.leaderId,
 	}
 }
 
@@ -143,8 +145,6 @@ func (c *Core) Step(m Message) {
 		c.handleAppendEntriesRequest(m)
 	case MsgAppendResponse:
 		c.handleAppendEntriesResponse(m)
-	case MsgProposeRequest:
-		c.handleProposeRequest(m)
 	case MsgInstallSnapshotRequest:
 		c.handleInstallSnapshotRequest(m)
 	case MsgInstallSnapshotResponse:
@@ -158,6 +158,7 @@ func (c *Core) Tick() {
 
 	// Start election
 	if c.state != LeaderState && c.electionElapsed > c.electionTimeout {
+		c.leaderId = 0
 		c.state = CandidateState
 		c.currentTerm++
 		c.votesGranted = map[int]bool{c.id: true}
@@ -230,6 +231,7 @@ func (c *Core) Ready() ReadyState {
 	}
 
 	if c.commitIndex > c.appliedIndex {
+		ready.ApplyFrom = c.appliedIndex + 1
 		lo := c.appliedIndex + 1 - c.startIndex
 		hi := c.commitIndex + 1 - c.startIndex
 		ready.EntriesToApply = append([]Entry(nil), c.log[lo:hi]...)
@@ -247,6 +249,7 @@ type ReadyState struct {
 	EntriesToPersist []Entry
 	EntriesToApply   []Entry
 	TruncateFrom     int
+	ApplyFrom        int
 
 	// SnapshotIndex is nonzero exactly when a snapshot boundary has advanced
 	// (via CompactLog or a received InstallSnapshot) since the last Ready()
@@ -300,6 +303,7 @@ func (c *Core) handleVoteResponse(m Message) {
 	c.votesGranted[m.FromId] = true
 	if len(c.votesGranted)*2 > len(c.peers) && c.state == CandidateState {
 		c.state = LeaderState
+		c.leaderId = c.id
 		for _, peer := range c.peers {
 			c.nextIndex[peer] = c.lastIndex() + 1
 			c.matchIndex[peer] = 0
@@ -329,6 +333,8 @@ func (c *Core) handleAppendEntriesRequest(m Message) {
 		c.msgs = append(c.msgs, resp)
 		return
 	}
+	c.leaderId = m.FromId
+
 	if m.LastLogIndex < c.startIndex {
 		c.resetElectionTimer()
 		resp.Success = false
@@ -420,13 +426,19 @@ func (c *Core) handleAppendEntriesResponse(m Message) {
 	}
 }
 
-func (c *Core) handleProposeRequest(msg Message) {
+func (c *Core) Propose(cmds []Command) (index int, term uint64, ok bool) {
 	if c.state != LeaderState {
-		return
+		return 0, 0, false
 	}
-	for _, cmd := range msg.ProposeCmd {
+	if len(cmds) == 0 {
+		return 0, 0, false
+	}
+	for _, cmd := range cmds {
 		c.log = append(c.log, Entry{Cmd: cmd, Term: c.currentTerm})
 	}
+	c.resetElectionTimer()
+	c.replicateLog()
+	return c.lastIndex() - len(cmds) + 1, c.currentTerm, true
 }
 
 func (c *Core) replicateLog() {
@@ -486,6 +498,7 @@ func (c *Core) handleInstallSnapshotRequest(m Message) {
 		resp.Term = m.Term
 		c.becomeFollower(m.Term)
 	}
+	c.leaderId = m.FromId
 	if c.state == CandidateState {
 		c.state = FollowerState
 	}
@@ -527,6 +540,7 @@ func (c *Core) becomeFollower(newTerm uint64) {
 	c.currentTerm = newTerm
 	c.votedFor = 0
 	c.votesGranted = make(map[int]bool)
+	c.leaderId = 0
 	c.resetElectionTimer()
 }
 

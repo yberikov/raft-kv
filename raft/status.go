@@ -11,4 +11,5 @@ type Status struct {
 	// Log[i] corresponds to logical index StartIndex+i.
 	StartIndex   int
 	AppliedIndex int
+	LeaderId     int
 }

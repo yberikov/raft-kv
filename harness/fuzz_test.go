@@ -67,10 +67,7 @@ func TestFuzzCluster(t *testing.T) {
 		var lastProposed []raft.Command
 		propose := func(cmds []raft.Command) {
 			if leaderId := fuzzLeaderId(cluster, ids); leaderId != 0 {
-				cluster.nodes[leaderId].Step(raft.Message{
-					Type:       raft.MsgProposeRequest,
-					ProposeCmd: cmds,
-				})
+				cluster.nodes[leaderId].Propose(cmds)
 			}
 			lastProposed = cmds
 		}
