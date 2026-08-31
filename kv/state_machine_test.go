@@ -1,6 +1,7 @@
 package kv
 
 import (
+	"fmt"
 	"testing"
 
 	"raft-kv/raft"
@@ -18,72 +19,141 @@ func cas(key, expected, value string) raft.Entry {
 	return raft.Entry{Cmd: raft.Command{Op: raft.OpCas, Key: key, Expected: expected, Value: value}}
 }
 
+func get(key string) raft.Entry {
+	return raft.Entry{Cmd: raft.Command{Op: raft.OpGet, Key: key}}
+}
+
+// apply1 applies a single entry and returns its result. Every read in these
+// tests goes through an OpGet entry rather than a back-door accessor, so the
+// assertions exercise the same path a real client's read takes -- and so a
+// result that never makes it into Apply's return value cannot pass unnoticed.
+func apply1(t *testing.T, st *StateMachine, e raft.Entry) Result {
+	t.Helper()
+	out := st.Apply([]raft.Entry{e})
+	if len(out) != 1 {
+		t.Fatalf("Apply returned %d results for 1 entry", len(out))
+	}
+	return out[0]
+}
+
+func mustRead(t *testing.T, st *StateMachine, key, want string) {
+	t.Helper()
+	r := apply1(t, st, get(key))
+	if !r.Found || r.Value != want {
+		t.Fatalf("get(%q) = %+v, want Value=%q Found=true", key, r, want)
+	}
+}
+
+func mustMiss(t *testing.T, st *StateMachine, key string) {
+	t.Helper()
+	r := apply1(t, st, get(key))
+	if r.Found || r.Value != "" {
+		t.Fatalf("get(%q) = %+v, want Found=false and an empty Value", key, r)
+	}
+}
+
+func TestApplyReturnsOneResultPerEntryInOrder(t *testing.T) {
+	st := NewStateMachine()
+	out := st.Apply([]raft.Entry{
+		put("k", "v"),
+		get("k"),
+		cas("k", "v", "w"),
+		get("k"),
+		del("k"),
+		get("k"),
+	})
+
+	if len(out) != 6 {
+		t.Fatalf("Apply returned %d results for 6 entries", len(out))
+	}
+	if out[1].Value != "v" || !out[1].Found {
+		t.Fatalf("out[1] (get after put) = %+v, want Value=v Found=true", out[1])
+	}
+	if !out[2].Ok {
+		t.Fatalf("out[2] (successful cas) = %+v, want Ok=true", out[2])
+	}
+	if out[3].Value != "w" || !out[3].Found {
+		t.Fatalf("out[3] (get after cas) = %+v, want Value=w Found=true", out[3])
+	}
+	if !out[4].Found {
+		t.Fatalf("out[4] (delete of a present key) = %+v, want Found=true", out[4])
+	}
+	if out[5].Found {
+		t.Fatalf("out[5] (get after delete) = %+v, want Found=false", out[5])
+	}
+}
+
 func TestApplyPut(t *testing.T) {
 	st := NewStateMachine()
 	st.Apply([]raft.Entry{put("a", "1")})
 
-	if v, ok := st.Get("a"); !ok || v != "1" {
-		t.Fatalf("Get(a) = %q,%v want 1,true", v, ok)
-	}
-	if _, ok := st.Get("missing"); ok {
-		t.Fatalf("Get(missing) = ok, want not found")
-	}
+	mustRead(t, st, "a", "1")
+	mustMiss(t, st, "missing")
+}
+
+func TestApplyPutOverwrites(t *testing.T) {
+	st := NewStateMachine()
+	st.Apply([]raft.Entry{put("a", "1"), put("a", "2")})
+
+	mustRead(t, st, "a", "2")
 }
 
 func TestApplyDelete(t *testing.T) {
 	st := NewStateMachine()
 	st.Apply([]raft.Entry{put("a", "1")})
-	st.Apply([]raft.Entry{del("a")})
 
-	if _, ok := st.Get("a"); ok {
-		t.Fatalf("Get(a) after delete = ok, want not found")
+	if r := apply1(t, st, del("a")); !r.Found {
+		t.Fatalf("delete of a present key = %+v, want Found=true", r)
 	}
+	mustMiss(t, st, "a")
 }
 
-// A delete of a key that was never set is a no-op, not an error -- and,
-// critically, must not stop the rest of the batch from being applied.
+// TestApplyDeleteOfMissingKeyIsNoOpAndDoesNotStopTheBatch is a regression
+// test: a delete of a key that was never set is a no-op, not an error, and
+// must not stop the rest of the batch from being applied.
 func TestApplyDeleteOfMissingKeyIsNoOpAndDoesNotStopTheBatch(t *testing.T) {
 	st := NewStateMachine()
-	st.Apply([]raft.Entry{del("never-set"), put("a", "1"), put("b", "2")})
+	out := st.Apply([]raft.Entry{del("never-set"), put("a", "1"), put("b", "2")})
 
-	if v, ok := st.Get("a"); !ok || v != "1" {
-		t.Fatalf("Get(a) = %q,%v want 1,true -- entries after a no-op delete must still apply", v, ok)
+	if out[0].Found {
+		t.Fatalf("delete of an absent key = %+v, want Found=false", out[0])
 	}
-	if v, ok := st.Get("b"); !ok || v != "2" {
-		t.Fatalf("Get(b) = %q,%v want 2,true -- entries after a no-op delete must still apply", v, ok)
-	}
+	mustRead(t, st, "a", "1")
+	mustRead(t, st, "b", "2")
 }
 
 func TestApplyCasSucceedsWhenCurrentValueMatchesExpected(t *testing.T) {
 	st := NewStateMachine()
-	st.Apply([]raft.Entry{put("a", "1"), cas("a", "1", "2")})
+	st.Apply([]raft.Entry{put("a", "1")})
 
-	if v, ok := st.Get("a"); !ok || v != "2" {
-		t.Fatalf("Get(a) = %q,%v want 2,true", v, ok)
+	if r := apply1(t, st, cas("a", "1", "2")); !r.Ok {
+		t.Fatalf("cas with a matching Expected = %+v, want Ok=true", r)
 	}
+	mustRead(t, st, "a", "2")
 }
 
 func TestApplyCasFailsWhenCurrentValueDoesNotMatchExpected(t *testing.T) {
 	st := NewStateMachine()
-	st.Apply([]raft.Entry{put("a", "1"), cas("a", "wrong", "2")})
+	st.Apply([]raft.Entry{put("a", "1")})
 
-	if v, ok := st.Get("a"); !ok || v != "1" {
-		t.Fatalf("Get(a) = %q,%v want 1,true -- CAS with a stale Expected must not mutate the value", v, ok)
+	if r := apply1(t, st, cas("a", "wrong", "2")); r.Ok {
+		t.Fatalf("cas with a stale Expected = %+v, want Ok=false", r)
 	}
+	mustRead(t, st, "a", "1")
 }
 
 func TestApplyCasFailsOnMissingKey(t *testing.T) {
 	st := NewStateMachine()
-	st.Apply([]raft.Entry{cas("never-set", "", "2")})
 
-	if _, ok := st.Get("never-set"); ok {
-		t.Fatalf("Get(never-set) after CAS on a missing key = ok, want not found")
+	if r := apply1(t, st, cas("never-set", "", "2")); r.Ok {
+		t.Fatalf("cas on a missing key = %+v, want Ok=false", r)
 	}
+	mustMiss(t, st, "never-set")
 }
 
 // TestApplyDedupSuppressesRetryOfClientsFirstCommand is a regression test: the
-// dedup table's lastSeq entry must be recorded even the very first time a
-// client is seen, or a retried first request slips past dedup and re-applies.
+// session entry must be recorded even the very first time a client is seen, or
+// a retried first request slips past dedup and re-applies.
 func TestApplyDedupSuppressesRetryOfClientsFirstCommand(t *testing.T) {
 	st := NewStateMachine()
 	first := raft.Entry{Cmd: raft.Command{Op: raft.OpPut, Key: "k", Value: "first", ClientID: "c1", Seq: 1}}
@@ -92,9 +162,50 @@ func TestApplyDedupSuppressesRetryOfClientsFirstCommand(t *testing.T) {
 	st.Apply([]raft.Entry{first})
 	st.Apply([]raft.Entry{retry})
 
-	if v, _ := st.Get("k"); v != "first" {
-		t.Fatalf("Get(k) = %q, want %q -- retry of a client's first command must be suppressed", v, "first")
+	mustRead(t, st, "k", "first")
+}
+
+// TestApplyDedupReturnsTheCachedResultToARetry is the point of caching the
+// response alongside the sequence number: the client that retried never saw
+// the first response, so the retry must be answered with it rather than
+// silently swallowed.
+func TestApplyDedupReturnsTheCachedResultToARetry(t *testing.T) {
+	st := NewStateMachine()
+	st.Apply([]raft.Entry{put("k", "v")})
+
+	read := raft.Entry{Cmd: raft.Command{Op: raft.OpGet, Key: "k", ClientID: "c1", Seq: 1}}
+
+	original := apply1(t, st, read)
+	if original.Value != "v" || !original.Found {
+		t.Fatalf("original read = %+v, want Value=v Found=true", original)
 	}
+
+	// Same ClientID and Seq: an at-least-once resend of the same request.
+	if retried := apply1(t, st, read); retried != original {
+		t.Fatalf("retry returned %+v, want the cached %+v -- a suppressed duplicate still owes the client its answer", retried, original)
+	}
+}
+
+// TestApplyDedupCachesCasOutcome covers the case where the cached answer is
+// the only record of what happened: a CAS that lost the race must keep
+// reporting Ok=false to its retries, even though re-running it now would be
+// evaluated against different state.
+func TestApplyDedupCachesCasOutcome(t *testing.T) {
+	st := NewStateMachine()
+	st.Apply([]raft.Entry{put("k", "v")})
+
+	swap := raft.Entry{Cmd: raft.Command{Op: raft.OpCas, Key: "k", Expected: "wrong", Value: "w", ClientID: "c1", Seq: 1}}
+	if r := apply1(t, st, swap); r.Ok {
+		t.Fatalf("cas with a stale Expected = %+v, want Ok=false", r)
+	}
+
+	// Make the same CAS a winner if it were re-evaluated now.
+	st.Apply([]raft.Entry{put("k", "wrong")})
+
+	if r := apply1(t, st, swap); r.Ok {
+		t.Fatalf("retry of a failed cas = %+v, want the cached Ok=false -- a duplicate must be answered from the cache, not re-evaluated", r)
+	}
+	mustRead(t, st, "k", "wrong")
 }
 
 func TestApplyDedupAllowsNewSeqFromSameClient(t *testing.T) {
@@ -104,9 +215,7 @@ func TestApplyDedupAllowsNewSeqFromSameClient(t *testing.T) {
 		{Cmd: raft.Command{Op: raft.OpPut, Key: "k", Value: "v2", ClientID: "c1", Seq: 2}},
 	})
 
-	if v, _ := st.Get("k"); v != "v2" {
-		t.Fatalf("Get(k) = %q, want v2 -- a new Seq from the same client must apply", v)
-	}
+	mustRead(t, st, "k", "v2")
 }
 
 func TestApplyDedupIsPerClient(t *testing.T) {
@@ -116,53 +225,125 @@ func TestApplyDedupIsPerClient(t *testing.T) {
 		{Cmd: raft.Command{Op: raft.OpPut, Key: "k", Value: "from-c2", ClientID: "c2", Seq: 1}},
 	})
 
-	if v, _ := st.Get("k"); v != "from-c2" {
-		t.Fatalf("Get(k) = %q, want from-c2 -- Seq 1 from a different ClientID must not be treated as a duplicate", v)
+	mustRead(t, st, "k", "from-c2")
+}
+
+func TestApplyWithoutClientIDBypassesDedup(t *testing.T) {
+	st := NewStateMachine()
+	st.Apply([]raft.Entry{put("k", "v1"), put("k", "v2")})
+
+	// Sessionless commands carry no Seq, so identical ones must not be
+	// mistaken for duplicates of each other.
+	mustRead(t, st, "k", "v2")
+	if len(st.sessions) != 0 {
+		t.Fatalf("sessions = %+v, want empty -- a command with no ClientID must not create a session", st.sessions)
+	}
+}
+
+// TestApplyStaleSeqIsNeitherReappliedNorMisanswered covers the duplicate the
+// session cache can no longer answer: a delayed proposal from before the
+// client's current request, committed late. It must not re-apply (the command
+// already took effect once), and it must not be handed the newer request's
+// cached result. Distinguishing this from a genuine miss needs a dedicated
+// error field -- a zero Result reads as "key not found" for a Get.
+func TestApplyStaleSeqIsNeitherReappliedNorMisanswered(t *testing.T) {
+	st := NewStateMachine()
+	st.Apply([]raft.Entry{{Cmd: raft.Command{Op: raft.OpPut, Key: "k", Value: "one", ClientID: "c1", Seq: 1}}})
+	st.Apply([]raft.Entry{{Cmd: raft.Command{Op: raft.OpPut, Key: "k", Value: "two", ClientID: "c1", Seq: 2}}})
+
+	stale := raft.Entry{Cmd: raft.Command{Op: raft.OpPut, Key: "k", Value: "one", ClientID: "c1", Seq: 1}}
+	r := apply1(t, st, stale)
+
+	mustRead(t, st, "k", "two")
+	if got := st.sessions["c1"].Seq; got != 2 {
+		t.Fatalf("session Seq = %d, want 2 -- a late duplicate must not move the session backwards", got)
+	}
+	if r.Value != "" || r.Found || r.Ok {
+		t.Fatalf("stale duplicate returned %+v, want no value/Found/Ok -- the cache holds a different request's answer", r)
 	}
 }
 
 // TestSnapshotRestoreRoundTrip is a regression test for gob silently dropping
-// unexported fields: Snapshot must produce bytes that Restore can actually
-// decode back into a usable state machine, including one that accepts
-// further writes afterward (a nil map from a failed decode would panic on
-// the first Put).
+// unexported fields: Snapshot must produce bytes Restore can decode back into
+// a usable state machine, including one that accepts further writes (a nil map
+// from a failed decode would panic on the first Put).
 func TestSnapshotRestoreRoundTrip(t *testing.T) {
 	st := NewStateMachine()
 	st.Apply([]raft.Entry{put("a", "1"), put("b", "2")})
 
-	snap := st.Snapshot()
-
 	restored := NewStateMachine()
-	restored.Restore(snap)
+	restored.Restore(st.Snapshot())
 
-	if v, ok := restored.Get("a"); !ok || v != "1" {
-		t.Fatalf("Get(a) after restore = %q,%v want 1,true", v, ok)
-	}
-	if v, ok := restored.Get("b"); !ok || v != "2" {
-		t.Fatalf("Get(b) after restore = %q,%v want 2,true", v, ok)
-	}
+	mustRead(t, restored, "a", "1")
+	mustRead(t, restored, "b", "2")
 
 	restored.Apply([]raft.Entry{put("c", "3")})
-	if v, ok := restored.Get("c"); !ok || v != "3" {
-		t.Fatalf("Get(c) after post-restore Put = %q,%v want 3,true", v, ok)
-	}
+	mustRead(t, restored, "c", "3")
 }
 
-// TestSnapshotRestorePreservesDedupState covers the other half of the
-// snapshot payload: if lastSeq isn't carried across a snapshot/restore, a
-// retried request that was already applied before the snapshot would
-// re-apply after recovery.
-func TestSnapshotRestorePreservesDedupState(t *testing.T) {
+// TestSnapshotRestorePreservesCachedResults covers the other half of the
+// payload. It is what makes the snapshot/waiter interaction work: installing a
+// snapshot wipes any in-flight waiter, the client retries, and the retry is
+// answerable only because the cached response travelled inside the snapshot.
+func TestSnapshotRestorePreservesCachedResults(t *testing.T) {
 	st := NewStateMachine()
-	st.Apply([]raft.Entry{{Cmd: raft.Command{Op: raft.OpPut, Key: "k", Value: "first", ClientID: "c1", Seq: 1}}})
+	st.Apply([]raft.Entry{put("k", "first")})
+
+	read := raft.Entry{Cmd: raft.Command{Op: raft.OpGet, Key: "k", ClientID: "c1", Seq: 1}}
+	original := apply1(t, st, read)
 
 	restored := NewStateMachine()
 	restored.Restore(st.Snapshot())
 
-	retry := raft.Entry{Cmd: raft.Command{Op: raft.OpPut, Key: "k", Value: "second", ClientID: "c1", Seq: 1}}
-	restored.Apply([]raft.Entry{retry})
+	// Change the value so a re-executed read would answer differently.
+	restored.Apply([]raft.Entry{put("k", "second")})
 
-	if v, _ := restored.Get("k"); v != "first" {
-		t.Fatalf("Get(k) = %q, want %q -- dedup state must survive a snapshot/restore", v, "first")
+	if retried := apply1(t, restored, read); retried != original {
+		t.Fatalf("retry after restore returned %+v, want the cached %+v -- cached responses must survive a snapshot", retried, original)
 	}
+}
+
+// TestSnapshotRoundTripsManyKeys covers what Cluster.Restart depends on: a
+// snapshot must restore the complete applied state -- every key and the whole
+// client session table -- into a state machine that starts empty.
+//
+// Note what is deliberately NOT asserted here: byte equality between two
+// snapshots of the same state. gob encodes maps in Go's randomized map
+// iteration order, so a state machine's own snapshot differs from itself run
+// to run once it holds more than one key. Snapshots are interchangeable in
+// meaning, not in bytes, and anything comparing applied state across nodes has
+// to compare behaviour rather than encodings.
+func TestSnapshotRoundTripsManyKeys(t *testing.T) {
+	src := NewStateMachine()
+	var entries []raft.Entry
+	for i, k := range []string{"a", "b", "c", "d", "e", "f", "g", "h"} {
+		entries = append(entries, raft.Entry{Cmd: raft.Command{
+			Op: raft.OpPut, Key: k, Value: k + "-v",
+			ClientID: fmt.Sprintf("client-%d", i%3), Seq: uint64(i + 1),
+		}})
+	}
+	src.Apply(entries)
+
+	dst := NewStateMachine()
+	dst.Restore(src.Snapshot())
+
+	for _, k := range []string{"a", "b", "c", "d", "e", "f", "g", "h"} {
+		mustRead(t, dst, k, k+"-v")
+	}
+
+	// The session table has to survive too, or the restored node re-executes
+	// requests it has already answered. Replaying an entry the source already
+	// applied must be suppressed, not run again.
+	replay := entries[len(entries)-1]
+	if res := apply1(t, dst, replay); res != (Result{}) {
+		t.Fatalf("replayed request returned %+v, want the cached empty Put result", res)
+	}
+	stale := raft.Entry{Cmd: raft.Command{
+		Op: raft.OpPut, Key: "a", Value: "clobbered",
+		ClientID: replay.Cmd.ClientID, Seq: replay.Cmd.Seq - 3,
+	}}
+	if res := apply1(t, dst, stale); res.Err == "" {
+		t.Fatalf("a stale retry returned %+v, want a rejection -- the restored session table did not carry the client's sequence number", res)
+	}
+	mustRead(t, dst, "a", "a-v")
 }

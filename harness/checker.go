@@ -2,8 +2,52 @@ package harness
 
 import (
 	"fmt"
+	"raft-kv/kv"
 	"raft-kv/raft"
 )
+
+// ResultLog is the output-side twin of CommittedLog. CommittedLog checks that
+// every node holds the same *entry* at a given index; ResultLog checks that
+// applying that entry produced the same *result* everywhere.
+//
+// That is a genuinely separate property. Raft guarantees identical inputs; it
+// says nothing about whether the state machines fed those inputs are in
+// identical states, or whether Apply is deterministic. A node whose state
+// machine is stale, empty, or missing its session table produces different
+// answers from a log that CommittedLog finds flawless.
+//
+// Index alone is a safe key here, unlike the (index, term) pairing resolve
+// needs: a waiter is registered before commitment, so its index can still be
+// overwritten, whereas a result is produced only after commitment, and
+// committed entries never change.
+type ResultLog struct {
+	results map[int]resultRecord
+}
+
+// resultRecord remembers which node reported a result, so a disagreement can
+// name both sides rather than just the index.
+type resultRecord struct {
+	nodeId int
+	result kv.Result
+}
+
+func NewResultLog() ResultLog {
+	return ResultLog{results: make(map[int]resultRecord)}
+}
+
+// Merge records one node's result for one applied index. Nodes apply at
+// different ticks, and a node restored from a snapshot never applies the
+// indices folded into it, so this accumulates over time rather than comparing
+// a single instant -- absence is not disagreement, only a conflicting report
+// is.
+func (r ResultLog) Merge(nodeId, index int, result kv.Result) error {
+	if existing, ok := r.results[index]; ok && existing.result != result {
+		return fmt.Errorf("state machine determinism violated at index %d: node %d produced %+v, node %d produced %+v",
+			index, existing.nodeId, existing.result, nodeId, result)
+	}
+	r.results[index] = resultRecord{nodeId: nodeId, result: result}
+	return nil
+}
 
 type CommittedLog struct {
 	log map[int]raft.Entry

@@ -72,6 +72,10 @@ func TestTrioElectsLeaderAndReplicates(t *testing.T) {
 	}
 	t.Logf("seed=%d: node %d elected leader in term %d", seed, leader, d.nodes[leader].currentTerm)
 
+	// The leader already appended a no-op of its own term when it won, and a
+	// seed may have run more than one election, so count from wherever the
+	// log actually ends rather than from a fixed index.
+	base := d.nodes[leader].lastIndex()
 	for i := 0; i < 3; i++ {
 		d.nodes[leader].log = append(d.nodes[leader].log, Entry{Cmd: Command{Key: fmt.Sprintf("op-%d", i)}, Term: d.nodes[leader].currentTerm})
 	}
@@ -79,8 +83,8 @@ func TestTrioElectsLeaderAndReplicates(t *testing.T) {
 		inbox = d.round(inbox)
 	}
 
-	if got := d.nodes[leader].commitIndex; got != 3 {
-		t.Fatalf("seed=%d: leader commitIndex = %d, want 3", seed, got)
+	if got, want := d.nodes[leader].commitIndex, base+3; got != want {
+		t.Fatalf("seed=%d: leader commitIndex = %d, want %d", seed, got, want)
 	}
 	for _, id := range d.ids {
 		if fmt.Sprint(d.nodes[id].log) != fmt.Sprint(d.nodes[leader].log) {

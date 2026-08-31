@@ -137,9 +137,22 @@ func TestHandleVoteResponse(t *testing.T) {
 		if c.state != LeaderState {
 			t.Fatalf("state = %v, want LeaderState", c.state)
 		}
+
+		// A new leader appends a no-op of its own term. §5.4.2 forbids
+		// committing an inherited entry by counting replicas, so without a
+		// current-term entry to commit above them, entries carried over from
+		// previous terms stay uncommitted forever in a quiet cluster.
+		noopIndex := c.lastIndex()
+		if got := c.log[noopIndex-c.startIndex]; got.Term != c.currentTerm || got.Cmd != (Command{}) {
+			t.Fatalf("last entry = %+v, want an empty no-op at term %d", got, c.currentTerm)
+		}
 		for _, peer := range []int{2, 3} {
-			if got, want := c.nextIndex[peer], c.lastIndex()+1; got != want {
-				t.Fatalf("nextIndex[%d] = %d, want %d (Figure 2: reinitialized to leader's last log index + 1)", peer, got, want)
+			// Figure 2 reinitializes nextIndex to last log index + 1, measured
+			// before the no-op is appended -- so it lands *on* the no-op. Off
+			// by one the other way and the no-op is never replicated, which
+			// makes appending it pointless.
+			if got := c.nextIndex[peer]; got != noopIndex {
+				t.Fatalf("nextIndex[%d] = %d, want %d (the no-op's own index, so it gets replicated)", peer, got, noopIndex)
 			}
 			if got := c.matchIndex[peer]; got != 0 {
 				t.Fatalf("matchIndex[%d] = %d, want 0", peer, got)

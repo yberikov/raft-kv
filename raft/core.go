@@ -67,6 +67,7 @@ const (
 )
 
 const (
+	OpGet OpType = "get"
 	OpPut OpType = "put"
 	OpDel OpType = "del"
 	OpCas OpType = "cas"
@@ -308,6 +309,7 @@ func (c *Core) handleVoteResponse(m Message) {
 			c.nextIndex[peer] = c.lastIndex() + 1
 			c.matchIndex[peer] = 0
 		}
+		c.log = append(c.log, Entry{Term: c.currentTerm})
 	}
 }
 
@@ -519,7 +521,18 @@ func (c *Core) handleInstallSnapshotRequest(m Message) {
 		}
 	}
 
-	resp.LastLogIndex = c.lastIndex()
+	// Acknowledge the snapshot point, not this node's own last index. The
+	// branch above verifies only the entry *at* SnapshotIndex; anything this
+	// follower kept beyond it is an unverified tail from an earlier term that
+	// the leader may not have at all. Reporting it would let the leader set
+	// nextIndex past the end of its own log (a panic in replicateLog) and,
+	// worse, count this node's fictional entries toward a commit quorum. Any
+	// tail that really does match gets re-confirmed by the normal
+	// AppendEntries consistency check, which is what that check is for.
+	//
+	// This matches the AppendEntries response, where LastLogIndex likewise
+	// means "the last index I have confirmed matches yours".
+	resp.LastLogIndex = m.SnapshotIndex
 	c.msgs = append(c.msgs, resp)
 }
 

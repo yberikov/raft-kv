@@ -107,8 +107,12 @@ func TestHandleInstallSnapshotRequestKeepsConsistentSuffix(t *testing.T) {
 		FromId: 1, ToId: 2, Type: MsgInstallSnapshotRequest, Term: 2,
 		SnapshotIndex: 2, SnapshotTerm: 2, SnapshotData: "state-as-of-2",
 	})
-	if resp.LastLogIndex != 3 {
-		t.Fatalf("resp.LastLogIndex = %d, want 3 (kept entry c beyond the snapshot)", resp.LastLogIndex)
+	// Entry c is kept locally, but it is NOT acknowledged: the leader only
+	// proved the entry at index 2 matches, so index 2 is all this node may
+	// claim. Acknowledging 3 would invite the leader to treat an unverified
+	// tail as replicated.
+	if resp.LastLogIndex != 2 {
+		t.Fatalf("resp.LastLogIndex = %d, want 2 (the snapshot point, not the kept tail)", resp.LastLogIndex)
 	}
 	if c.startIndex != 2 {
 		t.Fatalf("startIndex = %d, want 2", c.startIndex)
@@ -133,8 +137,11 @@ func TestHandleInstallSnapshotRequestIgnoresStaleSnapshot(t *testing.T) {
 	if c.snapshotData != "already-have-this" {
 		t.Fatalf("snapshotData = %v, a stale snapshot must not overwrite it", c.snapshotData)
 	}
-	if resp.LastLogIndex != c.lastIndex() {
-		t.Fatalf("resp.LastLogIndex = %d, want current lastIndex %d", resp.LastLogIndex, c.lastIndex())
+	// Nothing was installed, but index 1 is inside the snapshot this node
+	// already holds, so acknowledging it is still true -- and it keeps the
+	// leader from concluding anything about the entries above it.
+	if resp.LastLogIndex != 1 {
+		t.Fatalf("resp.LastLogIndex = %d, want 1 (the offered snapshot point)", resp.LastLogIndex)
 	}
 }
 
